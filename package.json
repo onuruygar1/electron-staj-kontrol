@@ -1,0 +1,13 @@
+{
+  "name": "staj-kontrol-app",
+  "version": "1.0.0",
+  "description": "PDF transkriptinden Staj I ve Staj II uygunluk kontrolü yapan Electron uygulaması",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^35.0.0",
+    "pdf-parse": "^1.1.1"
+  }
+}

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staj Kontrol Uygulaması12</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f5f7fb;
+      color: #1f2937;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      margin-bottom: 8px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+    }
+    button:hover { background: #1d4ed8; }
+    .summary {
+      margin-top: 16px;
+      padding: 14px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .student-card {
+      background: white;
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    .ok { color: #15803d; font-weight: bold; }
+    .bad { color: #b91c1c; font-weight: bold; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      padding: 8px;
+    }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Staj I / Staj II Uygunluk Kontrolü</h1>
+    <p class="muted">
+      PDF transkripti seç. Uygulama öğrencilerin notlarını okuyup Staj I ve Staj II uygunluğunu hesaplasın.
+    </p>
+
+    <button id="analyzeBtn">PDF Seç ve Analiz Et</button>
+    <div id="summary"></div>
+    <div id="results"></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
