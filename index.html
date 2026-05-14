@@ -61,6 +61,59 @@
     #analyzeBtn:hover    { background: #1d4ed8; }
     #analyzeBtn:disabled { background: #93c5fd; cursor: not-allowed; }
 
+    .ocr-option { display: none; } /* legacy, unused */
+
+    /* ── API Key bar ── */
+    .api-key-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      background: #fff;
+      border: 1px solid #dbeafe;
+      border-radius: 10px;
+    }
+    .api-key-bar label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      white-space: nowrap;
+    }
+    .api-key-bar input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'Consolas', monospace;
+      color: #0f172a;
+      outline: none;
+    }
+    .api-key-bar input:focus { border-color: #3b82f6; }
+    .api-key-bar button {
+      padding: 6px 12px;
+      background: #0f172a;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .api-key-bar button:hover { background: #1e293b; }
+    .gemini-badge {
+      display: inline-block;
+      background: #d1fae5;
+      color: #065f46;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
     /* ── Stats ── */
     .stats {
       display: flex;
@@ -78,6 +131,7 @@
     }
     .stat.green { border-left-color: #16a34a; }
     .stat.amber { border-left-color: #d97706; }
+    .stat.slate { border-left-color: #334155; }
     .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: #64748b; }
     .stat-value { font-size: 30px; font-weight: 700; color: #0f172a; line-height: 1.1; margin-top: 2px; }
 
@@ -89,6 +143,16 @@
       background: #fff;
       border-radius: 6px;
       word-break: break-all;
+    }
+
+    .parse-summary {
+      margin-bottom: 18px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+      font-size: 12.5px;
+      border-radius: 8px;
+      padding: 10px 12px;
     }
 
     /* ── Toolbar ── */
@@ -189,6 +253,17 @@
     }
     .s-name { font-size: 15px; font-weight: 700; color: #0f172a; }
     .s-no   { font-size: 12px; color: #94a3b8; margin-top: 1px; }
+    .parse-warn {
+      margin-top: 6px;
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 6px;
+      padding: 3px 8px;
+    }
     .pills  { display: flex; gap: 7px; flex-wrap: wrap; }
 
     .pill {
@@ -260,6 +335,12 @@
   </div>
 
   <div class="wrap">
+    <div class="api-key-bar">
+      <label>Gemini API Key:</label>
+      <input type="password" id="geminiApiKey" placeholder="AIza... (isteğe bağlı — daha doğru ayrıştırma için)" autocomplete="off" />
+      <button id="saveKeyBtn">Kaydet</button>
+    </div>
+
     <div class="action-row">
       <button id="analyzeBtn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -294,619 +375,4 @@
   <script src="renderer.js"></script>
 </body>
 </html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Staj Uygunluk Kontrolü</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-
-    body {
-      font-family: 'Segoe UI', system-ui, Arial, sans-serif;
-      margin: 0;
-      background: #eef1f8;
-      color: #1e293b;
-      min-height: 100vh;
-    }
-
-    /* ── Header ── */
-    .app-header {
-      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-      color: white;
-      padding: 28px 0 24px;
-      box-shadow: 0 4px 18px rgba(30,64,175,0.25);
-    }
-    .app-header .inner {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 0 28px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .app-header h1 {
-      margin: 0 0 4px;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
-    .app-header p {
-      margin: 0;
-      font-size: 13.5px;
-      opacity: 0.82;
-    }
-
-    /* ── Upload button ── */
-    #analyzeBtn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(255,255,255,0.18);
-      border: 1.5px solid rgba(255,255,255,0.45);
-      color: white;
-      padding: 11px 20px;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      white-space: nowrap;
-      transition: background 0.15s, transform 0.12s;
-      backdrop-filter: blur(4px);
-    }
-    #analyzeBtn:hover {
-      background: rgba(255,255,255,0.28);
-      transform: translateY(-1px);
-    }
-    #analyzeBtn:active { transform: translateY(0); }
-    #analyzeBtn:disabled { opacity: 0.55; cursor: default; transform: none; }
-
-    /* ── Main container ── */
-    .container {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 24px 28px 48px;
-    }
-
-    /* ── Summary stats bar ── */
-    .summary-bar {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-      margin-top: 20px;
-    }
-    .stat-card {
-      background: white;
-      border-radius: 12px;
-      padding: 16px 18px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      border-top: 3px solid #3b82f6;
-      cursor: default;
-    }
-    .stat-card.green { border-top-color: #16a34a; }
-    .stat-card.amber { border-top-color: #d97706; }
-    .stat-card .stat-label {
-      font-size: 11.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #64748b;
-      margin-bottom: 4px;
-    }
-    .stat-card .stat-value {
-      font-size: 28px;
-      font-weight: 700;
-      color: #1e293b;
-      line-height: 1;
-    }
-    .file-info {
-      margin-top: 10px;
-      padding: 10px 14px;
-      background: white;
-      border-radius: 8px;
-      font-size: 12.5px;
-      color: #64748b;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-      word-break: break-all;
-    }
-
-    /* ── Toolbar (search + filters) ── */
-    #toolbar {
-      display: none;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 20px;
-      padding: 14px 16px;
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    }
-    .search-wrap {
-      flex: 1;
-      min-width: 200px;
-      position: relative;
-    }
-    .search-wrap svg {
-      position: absolute;
-      left: 11px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: #94a3b8;
-      pointer-events: none;
-    }
-    #searchInput {
-      width: 100%;
-      padding: 9px 12px 9px 34px;
-      border: 1.5px solid #e2e8f0;
-      border-radius: 8px;
-      font-size: 13.5px;
-      color: #1e293b;
-      background: #f8fafc;
-      outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
-    }
-    #searchInput:focus {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
-      background: white;
-    }
-    .filter-group {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .filter-btn {
-      padding: 8px 14px;
-      border-radius: 8px;
-      border: 1.5px solid #e2e8f0;
-      background: #f8fafc;
-      color: #475569;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.15s;
-      white-space: nowrap;
-    }
-    .filter-btn:hover { border-color: #3b82f6; color: #1d4ed8; background: #eff6ff; }
-    .filter-btn.active { background: #2563eb; border-color: #2563eb; color: white; font-weight: 600; }
-    .filter-btn.active.green { background: #16a34a; border-color: #16a34a; }
-    .filter-btn.active.amber { background: #d97706; border-color: #d97706; }
-    #filteredCount {
-      font-size: 12.5px;
-      color: #94a3b8;
-      white-space: nowrap;
-      margin-left: auto;
-    }
-
-    /* ── Message boxes ── */
-    .msg {
-      margin-top: 18px;
-      padding: 14px 18px;
-      background: white;
-      border-radius: 10px;
-      font-size: 14px;
-      color: #475569;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    .msg.error {
-      background: #fef2f2;
-      color: #b91c1c;
-      border-left: 4px solid #ef4444;
-    }
-
-    /* ── Student card ── */
-    .student-card {
-      background: white;
-      margin-top: 12px;
-      border-radius: 14px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-      overflow: hidden;
-      border: 1px solid #e2e8f0;
-      transition: box-shadow 0.15s;
-    }
-    .student-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.11); }
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 10px;
-      padding: 14px 20px;
-      border-bottom: 1px solid #f1f5f9;
-      background: #f8fafc;
-    }
-    .card-header-left .student-name {
-      font-size: 15.5px;
-      font-weight: 700;
-      color: #0f172a;
-      margin: 0 0 2px;
-    }
-    .card-header-left .student-no {
-      font-size: 12px;
-      color: #94a3b8;
-    }
-    .card-header-right {
-      display: flex;
-      gap: 8px;
-    }
-
-    /* ── Eligibility pills ── */
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 5px 12px;
-      border-radius: 999px;
-      font-size: 12.5px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    .pill.ok  { background: #dcfce7; color: #15803d; }
-    .pill.bad { background: #fee2e2; color: #b91c1c; }
-    .pill .dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: currentColor;
-      opacity: 0.7;
-    }
-
-    /* ── Grade table ── */
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13.5px;
-    }
-    thead th {
-      background: #f8fafc;
-      padding: 9px 16px;
-      font-size: 11.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #64748b;
-      border-bottom: 1px solid #e2e8f0;
-      text-align: left;
-    }
-    tbody tr { transition: background 0.1s; }
-    tbody tr:hover { background: #f8fafc; }
-    tbody td {
-      padding: 9px 16px;
-      border-bottom: 1px solid #f1f5f9;
-      color: #334155;
-    }
-    tbody tr:last-child td { border-bottom: none; }
-
-    .section-label {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11.5px;
-      font-weight: 600;
-    }
-    .section-label.s1  { background: #eff6ff; color: #1d4ed8; }
-    .section-label.s2  { background: #f0fdf4; color: #15803d; }
-    .section-label.pre { background: #fefce8; color: #92400e; }
-
-    .grade-badge {
-      display: inline-block;
-      padding: 2px 9px;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 13px;
-      background: #f1f5f9;
-      color: #334155;
-    }
-    .grade-badge.missing {
-      background: #fef2f2;
-      color: #ef4444;
-      font-weight: 500;
-      font-style: italic;
-    }
-
-    .status-ok  { color: #16a34a; font-weight: 600; font-size: 13px; }
-    .status-bad { color: #dc2626; font-weight: 600; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <header class="app-header">
-    <div class="inner">
-      <div>
-        <h1>Staj I / Staj II Uygunluk Kontrolü</h1>
-        <p>PDF transkriptini seç — öğrencilerin notları okunup staj uygunluğu otomatik hesaplanır.</p>
-      </div>
-      <button id="analyzeBtn">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-        </svg>
-        PDF Seç ve Analiz Et
-      </button>
-    </div>
-  </header>
-
-  <div class="container">
-    <div id="summary"></div>
-
-    <div id="toolbar">
-      <div class="search-wrap">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" id="searchInput" placeholder="İsim veya öğrenci no ile ara…" />
-      </div>
-      <div class="filter-group">
-        <button class="filter-btn active" data-filter="all">Tümü</button>
-        <button class="filter-btn green" data-filter="staj1">✓ Staj I Alabilen</button>
-        <button class="filter-btn amber" data-filter="staj2">✓ Staj II Alabilen</button>
-      </div>
-      <span id="filteredCount"></span>
-    </div>
-
-    <div id="results"></div>
-  </div>
-
-  <script src="renderer.js"></script>
-</body>
-</html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Staj Uygunluk Kontrolü</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-
-    body {
-      font-family: 'Segoe UI', system-ui, Arial, sans-serif;
-      margin: 0;
-      background: #eef1f8;
-      color: #1e293b;
-      min-height: 100vh;
-    }
-
-    /* ── Header ── */
-    .app-header {
-      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-      color: white;
-      padding: 28px 0 24px;
-      box-shadow: 0 4px 18px rgba(30,64,175,0.25);
-    }
-    .app-header .inner {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 0 28px;
-    }
-    .app-header h1 {
-      margin: 0 0 4px;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
-    .app-header p {
-      margin: 0;
-      font-size: 13.5px;
-      opacity: 0.82;
-    }
-
-    /* ── Main container ── */
-    .container {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 28px 28px 48px;
-    }
-
-    /* ── Upload button ── */
-    #analyzeBtn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: linear-gradient(135deg, #2563eb, #1d4ed8);
-      color: white;
-      border: none;
-      padding: 13px 22px;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 14.5px;
-      font-weight: 600;
-      box-shadow: 0 4px 14px rgba(37,99,235,0.35);
-      transition: transform 0.12s, box-shadow 0.12s;
-    }
-    #analyzeBtn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 18px rgba(37,99,235,0.45);
-    }
-    #analyzeBtn:active { transform: translateY(0); }
-    #analyzeBtn svg { flex-shrink: 0; }
-
-    /* ── Summary stats bar ── */
-    .summary-bar {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-      margin-top: 20px;
-    }
-    .stat-card {
-      background: white;
-      border-radius: 12px;
-      padding: 16px 18px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      border-top: 3px solid #3b82f6;
-    }
-    .stat-card.green { border-top-color: #16a34a; }
-    .stat-card.amber { border-top-color: #d97706; }
-    .stat-card .stat-label {
-      font-size: 11.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #64748b;
-      margin-bottom: 4px;
-    }
-    .stat-card .stat-value {
-      font-size: 28px;
-      font-weight: 700;
-      color: #1e293b;
-      line-height: 1;
-    }
-    .file-info {
-      margin-top: 10px;
-      padding: 10px 14px;
-      background: white;
-      border-radius: 8px;
-      font-size: 12.5px;
-      color: #64748b;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-      word-break: break-all;
-    }
-
-    /* ── Message boxes ── */
-    .msg {
-      margin-top: 18px;
-      padding: 14px 18px;
-      background: white;
-      border-radius: 10px;
-      font-size: 14px;
-      color: #475569;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    .msg.error {
-      background: #fef2f2;
-      color: #b91c1c;
-      border-left: 4px solid #ef4444;
-    }
-
-    /* ── Student card ── */
-    .student-card {
-      background: white;
-      margin-top: 16px;
-      border-radius: 14px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-      overflow: hidden;
-      border: 1px solid #e2e8f0;
-    }
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 10px;
-      padding: 16px 20px;
-      border-bottom: 1px solid #f1f5f9;
-      background: #f8fafc;
-    }
-    .card-header-left .student-name {
-      font-size: 16px;
-      font-weight: 700;
-      color: #0f172a;
-      margin: 0 0 2px;
-    }
-    .card-header-left .student-no {
-      font-size: 12.5px;
-      color: #94a3b8;
-    }
-    .card-header-right {
-      display: flex;
-      gap: 8px;
-    }
-
-    /* ── Eligibility pills ── */
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 5px 12px;
-      border-radius: 999px;
-      font-size: 12.5px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    .pill.ok  { background: #dcfce7; color: #15803d; }
-    .pill.bad { background: #fee2e2; color: #b91c1c; }
-    .pill .dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: currentColor;
-      opacity: 0.7;
-    }
-
-    /* ── Grade table ── */
-    .card-body { padding: 0; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13.5px;
-    }
-    thead th {
-      background: #f8fafc;
-      padding: 9px 16px;
-      font-size: 11.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #64748b;
-      border-bottom: 1px solid #e2e8f0;
-      text-align: left;
-    }
-    tbody tr { transition: background 0.1s; }
-    tbody tr:hover { background: #f8fafc; }
-    tbody td {
-      padding: 9px 16px;
-      border-bottom: 1px solid #f1f5f9;
-      color: #334155;
-    }
-    tbody tr:last-child td { border-bottom: none; }
-
-    .section-label {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11.5px;
-      font-weight: 600;
-    }
-    .section-label.s1 { background: #eff6ff; color: #1d4ed8; }
-    .section-label.s2 { background: #f0fdf4; color: #15803d; }
-    .section-label.pre { background: #fefce8; color: #92400e; }
-
-    .grade-badge {
-      display: inline-block;
-      padding: 2px 9px;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 13px;
-      background: #f1f5f9;
-      color: #334155;
-    }
-    .grade-badge.missing {
-      background: #fef2f2;
-      color: #ef4444;
-      font-weight: 500;
-      font-style: italic;
-    }
-
-    .status-ok  { color: #16a34a; font-weight: 600; font-size: 13px; }
-    .status-bad { color: #dc2626; font-weight: 600; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <header class="app-header">
-    <div class="inner">
-      <h1>Staj I / Staj II Uygunluk Kontrolü</h1>
-      <p>PDF transkriptini seç — öğrencilerin notları okunup staj uygunluğu otomatik hesaplanır.</p>
-    </div>
-  </header>
-
-  <div class="container">
-    <button id="analyzeBtn">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-      </svg>
-      PDF Seç ve Analiz Et
-    </button>
-
-    <div id="summary"></div>
-    <div id="results"></div>
-  </div>
-
-  <script src="renderer.js"></script>
-</body>
-</html>
+      

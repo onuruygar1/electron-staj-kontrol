@@ -3,6 +3,20 @@ const path = require('path');
 const fs = require('fs');
 const pdfParse = require('pdf-parse');
 
+// .env dosyasından API key yükle (dotenv gerektirmez)
+function loadEnvApiKey() {
+  try {
+    const envPath = path.join(__dirname, '.env');
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const match = line.match(/^GEMINI_API_KEY\s*=\s*(.+)$/);
+      if (match) return match[1].trim();
+    }
+  } catch {}
+  return '';
+}
+const ENV_GEMINI_API_KEY = loadEnvApiKey();
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
@@ -45,6 +59,9 @@ const COURSE_ALIASES = {
 
 const STAJ1_REQUIRED = ['BİL240', 'BİL265'];
 const STAJ2_REQUIRED = ['BİL343', 'BİL367', 'BİL344', 'BİL386'];
+const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
+
+const GRADE_REGEX = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
 
 function normalizeText(text) {
   return String(text || '')
@@ -160,9 +177,7 @@ function extractGradeFromLine(line) {
   const normalized = normalizeText(line).toUpperCase();
 
   // PDF text extraction can split symbols: "B +", "C -", "F 1", "X X".
-  const matches = normalized.match(
-    /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g
-  );
+  const matches = normalized.match(GRADE_REGEX);
 
   if (!matches || matches.length === 0) return null;
   return cleanGradeToken(matches[0]);
@@ -170,7 +185,7 @@ function extractGradeFromLine(line) {
 
 function getGradeMatchesWithIndex(line) {
   const normalized = normalizeText(line).toUpperCase();
-  const regex = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
+  const regex = new RegExp(GRADE_REGEX.source, 'g');
   const matches = [];
 
   let m;
@@ -257,6 +272,298 @@ function lineContainsAnyAlias(line, aliases) {
   return aliases.some(alias => normalizedLine.includes(normalizeCode(alias)));
 }
 
+function buildEmptyCourseMap(defaultValueFactory) {
+  const map = {};
+  for (const course of TRACKED_COURSES) {
+    map[course] = defaultValueFactory(course);
+  }
+  return map;
+}
+
+function pickBestCandidate(candidates) {
+  if (!candidates || candidates.length === 0) return null;
+
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.confidence !== b.confidence) return b.confidence - a.confidence;
+    return b.lineIndex - a.lineIndex;
+  });
+
+  return sorted[0];
+}
+
+function extractCoursesAndGradesInOrder(pageText) {
+  const text = normalizeText(pageText).toUpperCase();
+
+  const mentionRegexParts = TRACKED_COURSES.flatMap(course => {
+    const uniqueAliases = [...new Set(
+      COURSE_ALIASES[course]
+        .map(alias => normalizeText(alias).toUpperCase())
+    )];
+
+    return uniqueAliases
+      .sort((a, b) => b.length - a.length)
+      .map(alias => ({ course, alias }));
+  });
+
+  const orderedCourseMentions = [];
+  for (const { course, alias } of mentionRegexParts) {
+    let from = 0;
+    while (from < text.length) {
+      const idx = text.indexOf(alias, from);
+      if (idx === -1) break;
+
+      orderedCourseMentions.push({
+        course,
+        alias,
+        index: idx
+      });
+
+      from = idx + alias.length;
+    }
+  }
+
+  orderedCourseMentions.sort((a, b) => a.index - b.index);
+
+  const dedupedCourseMentions = [];
+  const seenCourseMention = new Set();
+  for (const mention of orderedCourseMentions) {
+    const key = `${mention.course}:${mention.index}`;
+    if (seenCourseMention.has(key)) continue;
+    seenCourseMention.add(key);
+    dedupedCourseMentions.push(mention);
+  }
+
+  const orderedGrades = [];
+  const gradeRegex = new RegExp(GRADE_REGEX.source, 'g');
+  let match;
+  while ((match = gradeRegex.exec(text)) !== null) {
+    orderedGrades.push({
+      grade: cleanGradeToken(match[0]),
+      index: match.index
+    });
+  }
+
+  return {
+    orderedCourseMentions: dedupedCourseMentions,
+    orderedGrades
+  };
+}
+
+function parseCoursesFromLinesWithDiagnostics(lines) {
+  const diagnostics = buildEmptyCourseMap(() => ({
+    source: 'none',
+    confidence: 0,
+    candidates: [],
+    conflict: false,
+    selectedLine: null
+  }));
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const mentions = getTrackedCourseMentions(line).sort((a, b) => a.index - b.index);
+    if (mentions.length === 0) continue;
+
+    const gradeMatches = getGradeMatchesWithIndex(line);
+
+    for (let mIdx = 0; mIdx < mentions.length; mIdx++) {
+      const mention = mentions[mIdx];
+      const nextMention = mentions[mIdx + 1];
+      const rightBound = nextMention ? nextMention.index : Number.POSITIVE_INFINITY;
+
+      const sameLineGrade = gradeMatches.find(g => g.index >= mention.end && g.index < rightBound);
+      if (sameLineGrade) {
+        diagnostics[mention.canonical].candidates.push({
+          grade: sameLineGrade.grade,
+          source: 'line-same',
+          confidence: 0.92,
+          lineIndex: i
+        });
+        continue;
+      }
+
+      if (i + 1 < lines.length && !hasAnyTrackedCourseAlias(lines[i + 1])) {
+        const nextLineGrade = extractGradeFromLine(lines[i + 1]);
+        if (nextLineGrade) {
+          diagnostics[mention.canonical].candidates.push({
+            grade: nextLineGrade,
+            source: 'line-next-1',
+            confidence: 0.79,
+            lineIndex: i + 1
+          });
+          continue;
+        }
+      }
+
+      if (i + 2 < lines.length && !hasAnyTrackedCourseAlias(lines[i + 2])) {
+        const secondNextLineGrade = extractGradeFromLine(lines[i + 2]);
+        if (secondNextLineGrade) {
+          diagnostics[mention.canonical].candidates.push({
+            grade: secondNextLineGrade,
+            source: 'line-next-2',
+            confidence: 0.67,
+            lineIndex: i + 2
+          });
+        }
+      }
+    }
+  }
+
+  const courses = buildEmptyCourseMap(() => null);
+
+  for (const course of TRACKED_COURSES) {
+    const best = pickBestCandidate(diagnostics[course].candidates);
+    if (best) {
+      courses[course] = best.grade;
+      diagnostics[course].source = best.source;
+      diagnostics[course].confidence = best.confidence;
+      diagnostics[course].selectedLine = best.lineIndex;
+
+      const uniqueGrades = new Set(diagnostics[course].candidates.map(c => c.grade));
+      diagnostics[course].conflict = uniqueGrades.size > 1;
+      if (diagnostics[course].conflict) {
+        diagnostics[course].confidence = Math.max(0.45, diagnostics[course].confidence - 0.18);
+      }
+    }
+  }
+
+  return { courses, diagnostics };
+}
+
+function applyGlobalFallback(pageText, courses, diagnostics) {
+  const { orderedCourseMentions, orderedGrades } = extractCoursesAndGradesInOrder(pageText);
+  if (orderedCourseMentions.length === 0 || orderedGrades.length === 0) return;
+
+  const lastMentionIndexByCourse = buildEmptyCourseMap(() => -1);
+  for (let i = 0; i < orderedCourseMentions.length; i++) {
+    lastMentionIndexByCourse[orderedCourseMentions[i].course] = i;
+  }
+
+  for (const course of TRACKED_COURSES) {
+    if (courses[course]) continue;
+
+    const mentionIdx = lastMentionIndexByCourse[course];
+    if (mentionIdx === -1) continue;
+    if (mentionIdx >= orderedGrades.length) continue;
+
+    const mappedGrade = orderedGrades[mentionIdx].grade;
+    courses[course] = mappedGrade;
+    diagnostics[course].source = 'global-index-fallback';
+    diagnostics[course].confidence = 0.58;
+    diagnostics[course].selectedLine = null;
+  }
+}
+
+async function callGeminiForBatch(pageTexts, apiKey) {
+  const courseList = TRACKED_COURSES.map(c => {
+    const aliases = COURSE_ALIASES[c].join(', ');
+    return `${c} (veya: ${aliases})`;
+  }).join('\n');
+
+  const studentsBlock = pageTexts.map((text, i) =>
+    `=== OGRENCI ${i} ===\n${text.substring(0, 2000)}`
+  ).join('\n\n');
+
+  const prompt =
+    `Aşağıdaki ${pageTexts.length} öğrencinin transkript metinlerinden sadece şu derslerin notlarını bul:\n${courseList}\n\n` +
+    `Kurallar:\n` +
+    `- Ders birden fazla kez alınmışsa en son alınan notu kullan\n` +
+    `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
+    `- Ders bulunamazsa null döndür\n` +
+    `- Öğrenci sırasını koru — tam olarak ${pageTexts.length} elemanlı JSON dizisi döndür\n` +
+    `- SADECE JSON dizisi döndür, başka metin yazma\n` +
+    `Format: [{"BİL240":"B+","BİL265":"A",...},{"BİL240":null,...},...]\n\n` +
+    studentsBlock;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+  let response;
+  try {
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 32768 }
+        })
+      }
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    console.error(`Gemini HTTP ${response.status}:`, errBody.slice(0, 500));
+    if (response.status === 429) {
+      const retryAfter = parseInt(response.headers.get('Retry-After') || '65', 10);
+      const waitMs = Math.min(retryAfter * 1000, 120000);
+      console.warn(`Gemini rate limit — ${waitMs / 1000}s bekleniyor...`);
+      await new Promise(r => setTimeout(r, waitMs));
+      return callGeminiForBatch(pageTexts, apiKey);
+    }
+    throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 300)}`);
+  }
+
+  const data = await response.json();
+  const candidate = data.candidates?.[0];
+  const rawText = candidate?.content?.parts?.[0]?.text;
+  if (!rawText) {
+    const detail = JSON.stringify(data).slice(0, 500);
+    console.error('Gemini boş yanıt:', detail);
+    throw new Error(`Gemini boş yanıt (finishReason: ${candidate?.finishReason || '?'}): ${detail}`);
+  }
+
+  const parsed = JSON.parse(rawText);
+  if (!Array.isArray(parsed)) throw new Error('Gemini dizi döndürmedi');
+
+  return parsed.map(item => {
+    const courses = {};
+    for (const course of TRACKED_COURSES) courses[course] = null;
+    if (item && typeof item === 'object') {
+      for (const [key, value] of Object.entries(item)) {
+        const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
+        if (canonical) {
+          courses[canonical] = value ? cleanGradeToken(String(value)) : null;
+        }
+      }
+    }
+    return courses;
+  });
+}
+
+function buildParseSummary(students) {
+  const summary = {
+    totalStudents: students.length,
+    lowConfidenceStudents: 0,
+    fallbackUsedStudents: 0,
+    missingCourseEntries: 0,
+    totalCourseEntries: students.length * TRACKED_COURSES.length,
+    lowConfidenceCourses: 0
+  };
+
+  for (const student of students) {
+    const diagnostics = student.parseDiagnostics?.courses || {};
+    const lowConfidenceCount = student.parseDiagnostics?.lowConfidenceCourses?.length || 0;
+    const fallbackUsed = Object.values(diagnostics).some(item => item?.source === 'global-index-fallback');
+
+    if (lowConfidenceCount > 0) summary.lowConfidenceStudents += 1;
+    if (fallbackUsed) summary.fallbackUsedStudents += 1;
+
+    for (const course of TRACKED_COURSES) {
+      if (!student.courses[course]) summary.missingCourseEntries += 1;
+      if ((diagnostics[course]?.confidence || 0) < 0.75) {
+        summary.lowConfidenceCourses += 1;
+      }
+    }
+  }
+
+  return summary;
+}
+
 function findGradeForCourseFromLines(lines, aliases) {
   const canonicalCourse = mapCanonicalCourse(aliases[0]);
   const foundGrades = [];
@@ -304,25 +611,30 @@ function parseStudentPage(pageText) {
   const studentName = findStudentName(pageText);
   const lines = extractLines(pageText);
 
-  const courses = {
-    BİL240: null,
-    BİL265: null,
-    BİL300: null,
-    BİL343: null,
-    BİL367: null,
-    BİL344: null,
-    BİL386: null
-  };
+  const parsedFromLines = parseCoursesFromLinesWithDiagnostics(lines);
+  const courses = parsedFromLines.courses;
+  const courseDiagnostics = parsedFromLines.diagnostics;
 
-  for (const canonicalCourse of Object.keys(courses)) {
-    const aliases = COURSE_ALIASES[canonicalCourse];
-    courses[canonicalCourse] = findGradeForCourseFromLines(lines, aliases);
-  }
+  applyGlobalFallback(pageText, courses, courseDiagnostics);
+
+  const lowConfidenceCourses = TRACKED_COURSES.filter(course => {
+    const conf = courseDiagnostics[course]?.confidence || 0;
+    return conf < 0.75;
+  });
+
+  const avgConfidence = TRACKED_COURSES
+    .map(course => courseDiagnostics[course]?.confidence || 0)
+    .reduce((sum, value) => sum + value, 0) / TRACKED_COURSES.length;
 
   return {
     studentNo,
     studentName,
     courses,
+    parseDiagnostics: {
+      averageConfidence: Number(avgConfidence.toFixed(3)),
+      lowConfidenceCourses,
+      courses: courseDiagnostics
+    },
     _debug: {
       firstLines: lines.slice(0, 25)
     }
@@ -368,6 +680,7 @@ function evaluateStudent(student) {
     staj1TakenAndPassed,
     staj2Details,
     staj2Eligible,
+    parseDiagnostics: student.parseDiagnostics,
     _debug: student._debug
   };
 }
@@ -402,7 +715,22 @@ function groupTextItemsToRows(items) {
   return lines;
 }
 
-ipcMain.handle('pick-pdf-and-analyze', async () => {
+async function extractPagesFromPdfTextLayer(buffer) {
+  const parsed = await pdfParse(buffer, {
+    pagerender: async (pageData) => {
+      const textContent = await pageData.getTextContent();
+      const lines = groupTextItemsToRows(textContent.items);
+      return lines.join('\n') + '\n===PAGE_BREAK===\n';
+    }
+  });
+
+  return {
+    pages: extractPages(parsed.text),
+    totalPages: parsed.numpages
+  };
+}
+
+ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
   try {
     const result = await dialog.showOpenDialog({
       title: 'Transkript PDF seç',
@@ -417,15 +745,7 @@ ipcMain.handle('pick-pdf-and-analyze', async () => {
     const filePath = result.filePaths[0];
     const buffer = fs.readFileSync(filePath);
 
-    const parsed = await pdfParse(buffer, {
-      pagerender: async (pageData) => {
-        const textContent = await pageData.getTextContent();
-        const lines = groupTextItemsToRows(textContent.items);
-        return lines.join('\n') + '\n===PAGE_BREAK===\n';
-      }
-    });
-
-    const pages = extractPages(parsed.text);
+    const { pages, totalPages } = await extractPagesFromPdfTextLayer(buffer);
 
     const relevantPages = pages.filter(page => {
       const normalized = normalizeText(page);
@@ -436,18 +756,54 @@ ipcMain.handle('pick-pdf-and-analyze', async () => {
       );
     });
 
-    const students = relevantPages
-      .map(parseStudentPage)
+    const apiKey = (typeof options.apiKey === 'string' ? options.apiKey.trim() : '') || ENV_GEMINI_API_KEY;
+
+    const parseResults = [];
+    if (apiKey) {
+      const BATCH_SIZE = 10;
+      const allCourses = [];
+      for (let i = 0; i < relevantPages.length; i += BATCH_SIZE) {
+        if (i > 0) await new Promise(r => setTimeout(r, 5000));
+        const batch = relevantPages.slice(i, i + BATCH_SIZE);
+        try {
+          const batchCourses = await callGeminiForBatch(batch, apiKey);
+          // Gemini eksik eleman döndürürse regex ile tamamla
+          const safeCourses = batch.map((page, idx) =>
+            batchCourses[idx] || parseStudentPage(page).courses
+          );
+          allCourses.push(...safeCourses);
+        } catch (err) {
+          console.warn(`Gemini batch hatası [${i}–${i + batch.length - 1}]: ${err.message} — regex parser kullanılıyor`);
+          for (const page of batch) allCourses.push(parseStudentPage(page).courses);
+        }
+      }
+      for (let j = 0; j < relevantPages.length; j++) {
+        parseResults.push({
+          studentNo: findStudentNo(relevantPages[j]),
+          studentName: findStudentName(relevantPages[j]),
+          courses: allCourses[j],
+          parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
+        });
+      }
+    } else {
+      for (const page of relevantPages) parseResults.push(parseStudentPage(page));
+    }
+
+    const students = parseResults
       .map(evaluateStudent)
       .filter(student => student.studentNo !== 'Bilinmiyor');
 
-    console.log(`Toplam sayfa: ${parsed.numpages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}`);
+    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}${apiKey ? ' | Gemini kullanıldı' : ''}`);
+
+    const parseSummary = buildParseSummary(students);
 
     return {
       canceled: false,
       filePath,
-      totalPages: parsed.numpages,
+      totalPages,
       totalStudents: students.length,
+      parseSummary,
+      geminiUsed: Boolean(apiKey),
       students
     };
   } catch (error) {

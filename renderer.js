@@ -1,8 +1,21 @@
-const analyzeBtn = document.getElementById('analyzeBtn');
-const summaryEl  = document.getElementById('summary');
-const resultsEl  = document.getElementById('results');
-const toolbarEl  = document.getElementById('toolbar');
-const searchEl   = document.getElementById('searchInput');
+const analyzeBtn  = document.getElementById('analyzeBtn');
+const summaryEl   = document.getElementById('summary');
+const resultsEl   = document.getElementById('results');
+const toolbarEl   = document.getElementById('toolbar');
+const searchEl    = document.getElementById('searchInput');
+const geminiKeyEl = document.getElementById('geminiApiKey');
+const saveKeyBtn  = document.getElementById('saveKeyBtn');
+
+// Load saved API key
+if (geminiKeyEl) geminiKeyEl.value = localStorage.getItem('geminiApiKey') || '';
+if (saveKeyBtn) {
+  saveKeyBtn.addEventListener('click', () => {
+    const key = geminiKeyEl.value.trim();
+    localStorage.setItem('geminiApiKey', key);
+    saveKeyBtn.textContent = 'Kaydedildi ✓';
+    setTimeout(() => { saveKeyBtn.textContent = 'Kaydet'; }, 1500);
+  });
+}
 
 let allStudents  = [];
 let activeFilter = 'all'; // 'all' | 'staj1' | 'staj2'
@@ -29,6 +42,25 @@ function statusCell(passed) {
     : '<span class="status-bad">✗ Kaldı / Yok</span>';
 }
 
+function renderParseWarning(student) {
+  const diagnostics = student.parseDiagnostics;
+  if (!diagnostics) return '';
+
+  const low = diagnostics.lowConfidenceCourses || [];
+  if (low.length === 0) return '';
+
+  const fallbackCourses = Object.entries(diagnostics.courses || {})
+    .filter(([, info]) => info && info.source === 'global-index-fallback')
+    .map(([course]) => course);
+
+  const confPercent = Math.round((diagnostics.averageConfidence || 0) * 100);
+  const fallbackText = fallbackCourses.length
+    ? ` · Fallback: ${fallbackCourses.join(', ')}`
+    : '';
+
+  return `<div class="parse-warn">Düşük güven: ${low.join(', ')} · Ortalama güven: %${confPercent}${fallbackText}</div>`;
+}
+
 /* ── Render one student card ── */
 function renderStudent(student) {
   const rows = [
@@ -43,6 +75,7 @@ function renderStudent(student) {
         <div>
           <div class="s-name">${student.studentName}</div>
           <div class="s-no">${student.studentNo}</div>
+          ${renderParseWarning(student)}
         </div>
         <div class="pills">
           <span class="pill ${student.staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
@@ -113,7 +146,8 @@ analyzeBtn.addEventListener('click', async () => {
   toolbarEl.style.display = 'none';
 
   try {
-    const data = await window.electronAPI.pickPdfAndAnalyze();
+    const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
+    const data = await window.electronAPI.pickPdfAndAnalyze(apiKey ? { apiKey } : {});
 
     if (data.canceled) {
       summaryEl.innerHTML = '<div class="msg">İşlem iptal edildi.</div>';
@@ -123,6 +157,18 @@ analyzeBtn.addEventListener('click', async () => {
     allStudents = data.students;
     const staj1Count = data.students.filter(s => s.staj1Eligible).length;
     const staj2Count = data.students.filter(s => s.staj2Eligible).length;
+    const parseSummary = data.parseSummary || {};
+    const geminiUsed = Boolean(data.geminiUsed);
+
+    const totalEntries = parseSummary.totalCourseEntries || 0;
+    const missingEntries = parseSummary.missingCourseEntries || 0;
+    const parseCoverage = totalEntries > 0
+      ? Math.round(((totalEntries - missingEntries) / totalEntries) * 100)
+      : 0;
+
+    const parserInfo = geminiUsed
+      ? `<span class="gemini-badge">Gemini 2.0 Flash</span>`
+      : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
 
     summaryEl.innerHTML = `
       <div class="stats">
@@ -138,8 +184,13 @@ analyzeBtn.addEventListener('click', async () => {
           <div class="stat-label">Staj II Alabilir</div>
           <div class="stat-value">${staj2Count}</div>
         </div>
+        <div class="stat slate">
+          <div class="stat-label">Parse Kapsamı</div>
+          <div class="stat-value">%${parseCoverage}</div>
+        </div>
       </div>
-      <div class="file-path">📄 ${data.filePath}</div>`;
+      <div class="file-path">📄 ${data.filePath}</div>
+      <div class="parse-summary">${parserInfo}</div>`;
 
     // Reset toolbar state
     activeFilter = 'all';
