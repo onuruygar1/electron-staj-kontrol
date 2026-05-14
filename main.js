@@ -68,6 +68,8 @@ function normalizeCode(code) {
 function cleanGradeToken(token) {
   return String(token || '')
     .toUpperCase()
+    .replace(/[＋]/g, '+')
+    .replace(/[−–—]/g, '-')
     .replace(/\s+/g, '')
     .trim();
 }
@@ -155,9 +157,92 @@ function mapCanonicalCourse(code) {
 }
 
 function extractGradeFromLine(line) {
-  const matches = normalizeText(line).match(/(?<!\w)(A\+|A-|A|B\+|B-|B|C\+|C-|C|D\+|D|F1|F2|XX|Y|P)(?!\w)/g);
+  const normalized = normalizeText(line).toUpperCase();
+
+  // PDF text extraction can split symbols: "B +", "C -", "F 1", "X X".
+  const matches = normalized.match(
+    /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g
+  );
+
   if (!matches || matches.length === 0) return null;
   return cleanGradeToken(matches[0]);
+}
+
+function getGradeMatchesWithIndex(line) {
+  const normalized = normalizeText(line).toUpperCase();
+  const regex = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
+  const matches = [];
+
+  let m;
+  while ((m = regex.exec(normalized)) !== null) {
+    matches.push({
+      index: m.index,
+      raw: m[0],
+      grade: cleanGradeToken(m[0])
+    });
+  }
+
+  return matches;
+}
+
+function getTrackedCourseMentions(line) {
+  const normalized = normalizeText(line).toUpperCase();
+  const mentions = [];
+
+  for (const [canonical, aliases] of Object.entries(COURSE_ALIASES)) {
+    for (const alias of aliases) {
+      const aliasText = normalizeText(alias).toUpperCase();
+      let from = 0;
+
+      while (from < normalized.length) {
+        const idx = normalized.indexOf(aliasText, from);
+        if (idx === -1) break;
+
+        mentions.push({
+          canonical,
+          index: idx,
+          end: idx + aliasText.length
+        });
+
+        from = idx + aliasText.length;
+      }
+    }
+  }
+
+  mentions.sort((a, b) => a.index - b.index || (b.end - b.index) - (a.end - a.index));
+
+  const deduped = [];
+  for (const item of mentions) {
+    const sameStart = deduped.find(existing => existing.index === item.index && existing.canonical === item.canonical);
+    if (!sameStart) deduped.push(item);
+  }
+
+  return deduped;
+}
+
+function hasAnyTrackedCourseAlias(line) {
+  return getTrackedCourseMentions(line).length > 0;
+}
+
+function extractGradeForCanonicalFromLine(line, canonicalCourse) {
+  const mentions = getTrackedCourseMentions(line)
+    .filter(item => item.canonical === canonicalCourse)
+    .sort((a, b) => a.index - b.index);
+
+  if (mentions.length === 0) return null;
+
+  const allMentions = getTrackedCourseMentions(line).sort((a, b) => a.index - b.index);
+  const gradeMatches = getGradeMatchesWithIndex(line);
+
+  for (const mention of mentions) {
+    const nextMention = allMentions.find(item => item.index > mention.index);
+    const rightBound = nextMention ? nextMention.index : Number.POSITIVE_INFINITY;
+
+    const grade = gradeMatches.find(g => g.index >= mention.end && g.index < rightBound);
+    if (grade) return grade.grade;
+  }
+
+  return null;
 }
 
 function extractLines(pageText) {
@@ -173,40 +258,45 @@ function lineContainsAnyAlias(line, aliases) {
 }
 
 function findGradeForCourseFromLines(lines, aliases) {
+  const canonicalCourse = mapCanonicalCourse(aliases[0]);
+  const foundGrades = [];
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     if (lineContainsAnyAlias(line, aliases)) {
-      // İki sütunlu layoutlarda aynı satırda birden fazla ders kodu olabilir.
-      // Ders kodunun bittiği pozisyondan sonrasına bakarak doğru notu bul.
-      const normalizedLine = normalizeText(line);
-      let codeEndPos = 0;
+      const sameLineGrade = canonicalCourse
+        ? extractGradeForCanonicalFromLine(line, canonicalCourse)
+        : extractGradeFromLine(line);
 
-      for (const alias of aliases) {
-        const normalizedAlias = normalizeText(alias).toUpperCase();
-        const idx = normalizedLine.toUpperCase().indexOf(normalizedAlias);
-        if (idx !== -1) {
-          codeEndPos = idx + normalizedAlias.length;
-          break;
+      if (sameLineGrade) {
+        foundGrades.push(sameLineGrade);
+        continue;
+      }
+
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        const nextLineGrade = hasAnyTrackedCourseAlias(nextLine) ? null : extractGradeFromLine(nextLine);
+        if (nextLineGrade) {
+          foundGrades.push(nextLineGrade);
+          continue;
         }
       }
 
-      const sameLineGrade = extractGradeFromLine(normalizedLine.substring(codeEndPos));
-      if (sameLineGrade) return sameLineGrade;
-
-      if (i + 1 < lines.length) {
-        const nextLineGrade = extractGradeFromLine(lines[i + 1]);
-        if (nextLineGrade) return nextLineGrade;
-      }
-
       if (i + 2 < lines.length) {
-        const secondNextLineGrade = extractGradeFromLine(lines[i + 2]);
-        if (secondNextLineGrade) return secondNextLineGrade;
+        const secondNextLine = lines[i + 2];
+        const secondNextLineGrade = hasAnyTrackedCourseAlias(secondNextLine) ? null : extractGradeFromLine(secondNextLine);
+        if (secondNextLineGrade) {
+          foundGrades.push(secondNextLineGrade);
+        }
       }
     }
   }
 
-  return null;
+  if (foundGrades.length === 0) return null;
+
+  // Ayni ders birden fazla alindiginda en son denemenin notunu kullan.
+  return foundGrades[foundGrades.length - 1];
 }
 
 function parseStudentPage(pageText) {
