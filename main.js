@@ -453,29 +453,25 @@ function applyGlobalFallback(pageText, courses, diagnostics) {
   }
 }
 
-async function callGeminiForBatch(pageTexts, apiKey) {
-  const courseList = TRACKED_COURSES.map(c => {
-    const aliases = COURSE_ALIASES[c].join(', ');
-    return `${c} (veya: ${aliases})`;
-  }).join('\n');
-
-  const studentsBlock = pageTexts.map((text, i) =>
-    `=== OGRENCI ${i} ===\n${text.substring(0, 2000)}`
-  ).join('\n\n');
+async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
+  const regexSummary = TRACKED_COURSES
+    .map(c => `${c}: ${regexCourses[c] || 'bulunamadı'}`)
+    .join(', ');
 
   const prompt =
-    `Aşağıdaki ${pageTexts.length} öğrencinin transkript metinlerinden sadece şu derslerin notlarını bul:\n${courseList}\n\n` +
-    `Kurallar:\n` +
-    `- Ders birden fazla kez alınmışsa en son alınan notu kullan\n` +
+    `Türk üniversitesi transkriptinden ders notlarını doğrula ve düzelt.\n\n` +
+    `Regex parser şu sonuçları buldu: ${regexSummary}\n\n` +
+    `Transkripti okuyarak:\n` +
+    `- Yanlış eşleştirilmiş notları düzelt (not başka bir derse ait olabilir)\n` +
+    `- "bulunamadı" olanları transkriptte varsa doldur\n` +
+    `- Ders birden fazla alınmışsa EN SON alınan notu kullan\n` +
     `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
-    `- Ders bulunamazsa null döndür\n` +
-    `- Öğrenci sırasını koru — tam olarak ${pageTexts.length} elemanlı JSON dizisi döndür\n` +
-    `- SADECE JSON dizisi döndür, başka metin yazma\n` +
-    `Format: [{"BİL240":"B+","BİL265":"A",...},{"BİL240":null,...},...]\n\n` +
-    studentsBlock;
+    `- Ders yoksa null döndür\n` +
+    `- SADECE JSON döndür\n\n` +
+    `Transkript:\n${pageText.substring(0, 5000)}`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   let response;
   try {
@@ -487,7 +483,11 @@ async function callGeminiForBatch(pageTexts, apiKey) {
         signal: controller.signal,
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 32768 }
+          generationConfig: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 512,
+            thinkingConfig: { thinkingBudget: 0 }
+          }
         })
       }
     );
@@ -497,42 +497,28 @@ async function callGeminiForBatch(pageTexts, apiKey) {
 
   if (!response.ok) {
     const errBody = await response.text();
-    console.error(`Gemini HTTP ${response.status}:`, errBody.slice(0, 500));
     if (response.status === 429) {
-      const retryAfter = parseInt(response.headers.get('Retry-After') || '65', 10);
-      const waitMs = Math.min(retryAfter * 1000, 120000);
-      console.warn(`Gemini rate limit — ${waitMs / 1000}s bekleniyor...`);
-      await new Promise(r => setTimeout(r, waitMs));
-      return callGeminiForBatch(pageTexts, apiKey);
+      const waitMs = parseInt(response.headers.get('Retry-After') || '65', 10) * 1000;
+      await new Promise(r => setTimeout(r, Math.min(waitMs, 120000)));
+      return callGeminiForStudentWithContext(pageText, apiKey, regexCourses);
     }
-    throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 300)}`);
+    throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 200)}`);
   }
 
   const data = await response.json();
-  const candidate = data.candidates?.[0];
-  const rawText = candidate?.content?.parts?.[0]?.text;
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!rawText) {
-    const detail = JSON.stringify(data).slice(0, 500);
-    console.error('Gemini boş yanıt:', detail);
-    throw new Error(`Gemini boş yanıt (finishReason: ${candidate?.finishReason || '?'}): ${detail}`);
+    throw new Error(`Gemini boş yanıt (${data.candidates?.[0]?.finishReason || '?'})`);
   }
 
   const parsed = JSON.parse(rawText);
-  if (!Array.isArray(parsed)) throw new Error('Gemini dizi döndürmedi');
-
-  return parsed.map(item => {
-    const courses = {};
-    for (const course of TRACKED_COURSES) courses[course] = null;
-    if (item && typeof item === 'object') {
-      for (const [key, value] of Object.entries(item)) {
-        const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
-        if (canonical) {
-          courses[canonical] = value ? cleanGradeToken(String(value)) : null;
-        }
-      }
-    }
-    return courses;
-  });
+  const courses = {};
+  for (const course of TRACKED_COURSES) courses[course] = null;
+  for (const [key, value] of Object.entries(parsed)) {
+    const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
+    if (canonical) courses[canonical] = value ? cleanGradeToken(String(value)) : null;
+  }
+  return courses;
 }
 
 function buildParseSummary(students) {
@@ -760,30 +746,33 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
 
     const parseResults = [];
     if (apiKey) {
-      const BATCH_SIZE = 10;
-      const allCourses = [];
-      for (let i = 0; i < relevantPages.length; i += BATCH_SIZE) {
-        if (i > 0) await new Promise(r => setTimeout(r, 5000));
-        const batch = relevantPages.slice(i, i + BATCH_SIZE);
-        try {
-          const batchCourses = await callGeminiForBatch(batch, apiKey);
-          // Gemini eksik eleman döndürürse regex ile tamamla
-          const safeCourses = batch.map((page, idx) =>
-            batchCourses[idx] || parseStudentPage(page).courses
-          );
-          allCourses.push(...safeCourses);
-        } catch (err) {
-          console.warn(`Gemini batch hatası [${i}–${i + batch.length - 1}]: ${err.message} — regex parser kullanılıyor`);
-          for (const page of batch) allCourses.push(parseStudentPage(page).courses);
-        }
-      }
-      for (let j = 0; j < relevantPages.length; j++) {
-        parseResults.push({
-          studentNo: findStudentNo(relevantPages[j]),
-          studentName: findStudentName(relevantPages[j]),
-          courses: allCourses[j],
-          parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
-        });
+      // Önce tüm öğrenciler için regex parser çalıştır
+      const regexResults = relevantPages.map(parseStudentPage);
+
+      // Sonra 10'lu gruplar halinde paralel Gemini doğrulaması
+      const CONCURRENCY = 10;
+      for (let i = 0; i < regexResults.length; i += CONCURRENCY) {
+        const chunk = regexResults.slice(i, i + CONCURRENCY);
+        const chunkPages = relevantPages.slice(i, i + CONCURRENCY);
+
+        const chunkResults = await Promise.all(
+          chunk.map(async (regexResult, idx) => {
+            try {
+              const courses = await callGeminiForStudentWithContext(
+                chunkPages[idx], apiKey, regexResult.courses
+              );
+              return {
+                ...regexResult,
+                courses,
+                parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
+              };
+            } catch (err) {
+              console.warn(`Gemini hatası (${regexResult.studentNo}): ${err.message} — regex kullanılıyor`);
+              return regexResult;
+            }
+          })
+        );
+        parseResults.push(...chunkResults);
       }
     } else {
       for (const page of relevantPages) parseResults.push(parseStudentPage(page));
