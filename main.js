@@ -30,7 +30,7 @@ app.on('window-all-closed', () => {
 });
 
 const PASSING_GRADES = new Set([
-  'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A'
+  'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+'
 ]);
 
 const COURSE_ALIASES = {
@@ -91,9 +91,19 @@ function findStudentNo(pageText) {
 function findStudentName(pageText) {
   const normalized = normalizeText(pageText);
 
-  let m = normalized.match(/Adı Soyadı\s+(.+?)\s+Bölüm/i);
+  // Format: "Adı Soyadı İSİM K: AKTS T: ..."
+  let m = normalized.match(/Adı Soyadı\s+(.+?)\s+K:\s*AKTS/i);
   if (m) return m[1].trim();
 
+  // Fallback: before "K:" without AKTS
+  m = normalized.match(/Adı Soyadı\s+(.+?)\s+K:/i);
+  if (m) return m[1].trim();
+
+  // Fallback: before "Bölüm"
+  m = normalized.match(/Adı Soyadı\s+(.+?)\s+Bölüm/i);
+  if (m) return m[1].trim();
+
+  // Fallback: before "GNO:"
   m = normalized.match(/Adı Soyadı\s+(.+?)\s+GNO:/i);
   if (m) return m[1].trim();
 
@@ -145,7 +155,7 @@ function mapCanonicalCourse(code) {
 }
 
 function extractGradeFromLine(line) {
-  const matches = normalizeText(line).match(/\b(A-|A|B\+|B-|B|C\+|C-|C|D\+|D|F1|F2|XX|Y|P)\b/g);
+  const matches = normalizeText(line).match(/(?<!\w)(A\+|A-|A|B\+|B-|B|C\+|C-|C|D\+|D|F1|F2|XX|Y|P)(?!\w)/g);
   if (!matches || matches.length === 0) return null;
   return cleanGradeToken(matches[0]);
 }
@@ -167,7 +177,21 @@ function findGradeForCourseFromLines(lines, aliases) {
     const line = lines[i];
 
     if (lineContainsAnyAlias(line, aliases)) {
-      const sameLineGrade = extractGradeFromLine(line);
+      // İki sütunlu layoutlarda aynı satırda birden fazla ders kodu olabilir.
+      // Ders kodunun bittiği pozisyondan sonrasına bakarak doğru notu bul.
+      const normalizedLine = normalizeText(line);
+      let codeEndPos = 0;
+
+      for (const alias of aliases) {
+        const normalizedAlias = normalizeText(alias).toUpperCase();
+        const idx = normalizedLine.toUpperCase().indexOf(normalizedAlias);
+        if (idx !== -1) {
+          codeEndPos = idx + normalizedAlias.length;
+          break;
+        }
+      }
+
+      const sameLineGrade = extractGradeFromLine(normalizedLine.substring(codeEndPos));
       if (sameLineGrade) return sameLineGrade;
 
       if (i + 1 < lines.length) {
@@ -327,11 +351,7 @@ ipcMain.handle('pick-pdf-and-analyze', async () => {
       .map(evaluateStudent)
       .filter(student => student.studentNo !== 'Bilinmiyor');
 
-    console.log('Toplam sayfa:', parsed.numpages);
-    console.log('Toplam page bloğu:', pages.length);
-    console.log('İlgili öğrenci sayfası:', relevantPages.length);
-    console.log('Toplam öğrenci:', students.length);
-    console.log('İlk 3 öğrenci:', students.slice(0, 3));
+    console.log(`Toplam sayfa: ${parsed.numpages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}`);
 
     return {
       canceled: false,

@@ -1,89 +1,156 @@
 const analyzeBtn = document.getElementById('analyzeBtn');
-const summaryEl = document.getElementById('summary');
-const resultsEl = document.getElementById('results');
+const summaryEl  = document.getElementById('summary');
+const resultsEl  = document.getElementById('results');
+const toolbarEl  = document.getElementById('toolbar');
+const searchEl   = document.getElementById('searchInput');
 
-function badge(ok, yesText, noText) {
-  return `<span class="${ok ? 'ok' : 'bad'}">${ok ? yesText : noText}</span>`;
+let allStudents  = [];
+let activeFilter = 'all'; // 'all' | 'staj1' | 'staj2'
+
+/* ── Helpers ── */
+function pill(ok, yesText, noText) {
+  return `<span class="pill ${ok ? 'ok' : 'bad'}"><span class="dot"></span>${ok ? yesText : noText}</span>`;
 }
 
-function gradeText(grade) {
-  return grade ?? 'Bulunamadı';
+function gradeCell(grade) {
+  if (!grade) return '<span class="grade-badge missing">Bulunamadı</span>';
+  return `<span class="grade-badge">${grade}</span>`;
 }
 
+function sectionLabel(type) {
+  const map = { s1: 'Staj I', s2: 'Staj II', pre: 'Ön Koşul' };
+  const cls = type;
+  return `<span class="section-label ${cls}">${map[type]}</span>`;
+}
+
+function statusCell(passed) {
+  return passed
+    ? '<span class="status-ok">✓ Geçti</span>'
+    : '<span class="status-bad">✗ Kaldı / Yok</span>';
+}
+
+/* ── Render one student card ── */
 function renderStudent(student) {
+  const rows = [
+    ...student.staj1Details.map(item => ({ section: 's1',  code: item.code,          grade: item.grade,              passed: item.passed })),
+    {                                      section: 'pre', code: 'BİL300 (Staj I)',  grade: student.staj1CourseGrade, passed: student.staj1TakenAndPassed },
+    ...student.staj2Details.map(item => ({ section: 's2',  code: item.code,          grade: item.grade,              passed: item.passed }))
+  ];
+
   return `
-    <div class="student-card">
-      <h3>${student.studentName}</h3>
-      <div>Öğrenci No: <strong>${student.studentNo}</strong></div>
-      <div style="margin-top:8px;">Staj I: ${badge(student.staj1Eligible, 'Alabilir', 'Alamaz')}</div>
-      <div>Staj II: ${badge(student.staj2Eligible, 'Alabilir', 'Alamaz')}</div>
-
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="s-name">${student.studentName}</div>
+          <div class="s-no">${student.studentNo}</div>
+        </div>
+        <div class="pills">
+          <span class="pill ${student.staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
+          <span class="pill ${student.staj2Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj2Eligible ? 'Staj II Alabilir' : 'Staj II Alamaz'}</span>
+        </div>
+      </div>
       <table>
-        <thead>
-          <tr>
-            <th>Kural</th>
-            <th>Ders</th>
-            <th>Not</th>
-            <th>Durum</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Kural</th><th>Ders</th><th>Not</th><th>Durum</th></tr></thead>
         <tbody>
-          ${student.staj1Details.map(item => `
+          ${rows.map(r => `
             <tr>
-              <td>Staj I</td>
-              <td>${item.code}</td>
-              <td>${gradeText(item.grade)}</td>
-              <td>${badge(item.passed, 'Geçti', 'Kaldı / Yok')}</td>
-            </tr>
-          `).join('')}
-
-          <tr>
-            <td>Staj II ön koşul</td>
-            <td>BİL300 (Staj I)</td>
-            <td>${gradeText(student.staj1CourseGrade)}</td>
-            <td>${badge(student.staj1TakenAndPassed, 'Geçti', 'Kaldı / Yok')}</td>
-          </tr>
-
-          ${student.staj2Details.map(item => `
-            <tr>
-              <td>Staj II</td>
-              <td>${item.code}</td>
-              <td>${gradeText(item.grade)}</td>
-              <td>${badge(item.passed, 'Geçti', 'Kaldı / Yok')}</td>
-            </tr>
-          `).join('')}
+              <td><span class="tag ${r.section}">${r.section === 's1' ? 'Staj I' : r.section === 's2' ? 'Staj II' : 'Ön Koşul'}</span></td>
+              <td><strong>${r.code}</strong></td>
+              <td>${r.grade ? `<span class="grade">${r.grade}</span>` : '<span class="grade none">Bulunamadı</span>'}</td>
+              <td>${r.passed ? '<span class="ok-txt">✓ Geçti</span>' : '<span class="bad-txt">✗ Kaldı / Yok</span>'}</td>
+            </tr>`).join('')}
         </tbody>
       </table>
-    </div>
-  `;
+    </div>`;
 }
 
+/* ── Filter + search ── */
+function applyFilters() {
+  const query = searchEl.value.trim().toLowerCase();
+
+  let filtered = allStudents;
+  if (activeFilter === 'staj1') filtered = filtered.filter(s => s.staj1Eligible);
+  if (activeFilter === 'staj2') filtered = filtered.filter(s => s.staj2Eligible);
+  if (query) {
+    filtered = filtered.filter(s =>
+      s.studentName.toLowerCase().includes(query) ||
+      s.studentNo.includes(query)
+    );
+  }
+
+  document.getElementById('filteredCount').textContent =
+    filtered.length === allStudents.length
+      ? `${filtered.length} öğrenci`
+      : `${filtered.length} / ${allStudents.length} öğrenci`;
+
+  resultsEl.innerHTML = filtered.length
+    ? filtered.map(renderStudent).join('')
+    : '<div class="msg" style="margin-top:16px">Eşleşen öğrenci bulunamadı.</div>';
+}
+
+/* ── Filter button clicks ── */
+document.querySelectorAll('.fbtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const isActive = btn.classList.contains('active');
+    document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('active'));
+    if (!isActive) {
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+    } else {
+      activeFilter = 'all';
+    }
+    applyFilters();
+  });
+});
+
+searchEl.addEventListener('input', applyFilters);
+
+/* ── PDF analyze ── */
 analyzeBtn.addEventListener('click', async () => {
-  summaryEl.innerHTML = '<div class="summary">PDF okunuyor...</div>';
+  analyzeBtn.disabled = true;
+  summaryEl.innerHTML = '<div class="msg">⏳ PDF okunuyor, lütfen bekleyin…</div>';
   resultsEl.innerHTML = '';
+  toolbarEl.style.display = 'none';
 
   try {
     const data = await window.electronAPI.pickPdfAndAnalyze();
 
     if (data.canceled) {
-      summaryEl.innerHTML = '<div class="summary">İşlem iptal edildi.</div>';
+      summaryEl.innerHTML = '<div class="msg">İşlem iptal edildi.</div>';
       return;
     }
 
+    allStudents = data.students;
     const staj1Count = data.students.filter(s => s.staj1Eligible).length;
     const staj2Count = data.students.filter(s => s.staj2Eligible).length;
 
     summaryEl.innerHTML = `
-      <div class="summary">
-        <div><strong>Dosya:</strong> ${data.filePath}</div>
-        <div><strong>Toplam öğrenci:</strong> ${data.totalStudents}</div>
-        <div><strong>Staj I alabilen:</strong> ${staj1Count}</div>
-        <div><strong>Staj II alabilen:</strong> ${staj2Count}</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Toplam Öğrenci</div>
+          <div class="stat-value">${data.totalStudents}</div>
+        </div>
+        <div class="stat green">
+          <div class="stat-label">Staj I Alabilir</div>
+          <div class="stat-value">${staj1Count}</div>
+        </div>
+        <div class="stat amber">
+          <div class="stat-label">Staj II Alabilir</div>
+          <div class="stat-value">${staj2Count}</div>
+        </div>
       </div>
-    `;
+      <div class="file-path">📄 ${data.filePath}</div>`;
 
-    resultsEl.innerHTML = data.students.map(renderStudent).join('');
+    // Reset toolbar state
+    activeFilter = 'all';
+    searchEl.value = '';
+    document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('active'));
+    toolbarEl.style.display = 'flex';
+
+    applyFilters();
   } catch (error) {
-    summaryEl.innerHTML = `<div class="summary bad">Hata: ${error.message}</div>`;
+    summaryEl.innerHTML = `<div class="msg err">Hata: ${error.message}</div>`;
+  } finally {
+    analyzeBtn.disabled = false;
   }
 });
