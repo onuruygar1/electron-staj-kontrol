@@ -508,16 +508,20 @@ function normalizeNameForMatch(name) {
 // Transkriptteki isim kelimelerinin TAMAMI liste girişindeki isimde geçiyorsa eşleşir.
 // Böylece listede önde fazladan kelime olsa da eşleşme çalışır.
 function nameWordsMatch(transcriptName, listEntryName) {
-  const transcriptWords = String(transcriptName || '')
+  const normalize = s => String(s || '')
     .replace(/ı/g, 'İ').replace(/i/g, 'İ')
     .toUpperCase().trim().split(/\s+/).filter(Boolean);
-  if (transcriptWords.length === 0) return false;
-  const listWordSet = new Set(
-    String(listEntryName || '')
-      .replace(/ı/g, 'İ').replace(/i/g, 'İ')
-      .toUpperCase().trim().split(/\s+/).filter(Boolean)
-  );
-  return transcriptWords.every(w => listWordSet.has(w));
+
+  const transcriptWords = normalize(transcriptName);
+  const listWords       = normalize(listEntryName);
+  if (transcriptWords.length === 0 || listWords.length === 0) return false;
+
+  // İki yönlü alt-küme kontrolü: kısa olan tarafın tüm kelimeleri uzun olan tarafta mı?
+  const [shorter, longerSet] = transcriptWords.length <= listWords.length
+    ? [transcriptWords, new Set(listWords)]
+    : [listWords,       new Set(transcriptWords)];
+
+  return shorter.every(w => longerSet.has(w));
 }
 
 // "Son Not Döküm Belgesi" türü PDF'ten öğrenci numaralarını ve ders bilgisini çıkarır.
