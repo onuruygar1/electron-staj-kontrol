@@ -141,28 +141,57 @@ function extractPages(fullText) {
 }
 
 function findStudentNo(pageText) {
-  const m = pageText.match(/Öğrenci No\s+(\d+)/i);
-  return m ? m[1] : 'Bilinmiyor';
+  const text = normalizeText(pageText);
+
+  // "Öğrenci No", "Öğrenci Numarası", "Öğr. No", "Student No" vb.
+  // Ayırıcı: boşluk, ":", "-" kombinasyonları
+  const patterns = [
+    /Öğrenci\s+No[:\-\s]+(\d{7,10})/i,
+    /Öğrenci\s+Numara[sı]+[:\-\s]+(\d{7,10})/i,
+    /Öğr\.\s*No[:\-\s]+(\d{7,10})/i,
+    /Student\s+No[:\-\s]+(\d{7,10})/i,
+    /Student\s+Number[:\-\s]+(\d{7,10})/i,
+    /No\s*[:\-]\s*(\d{7,10})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1];
+  }
+
+  // Son çare: sayfada tek başına duran 8 haneli sayı (öğrenci no formatı)
+  const allNums = [...text.matchAll(/\b(\d{8})\b/g)].map(m => m[1]);
+  if (allNums.length === 1) return allNums[0];
+
+  return 'Bilinmiyor';
 }
 
 function findStudentName(pageText) {
   const normalized = normalizeText(pageText);
 
-  // Format: "Adı Soyadı İSİM K: AKTS T: ..."
-  let m = normalized.match(/Adı Soyadı\s+(.+?)\s+K:\s*AKTS/i);
-  if (m) return m[1].trim();
+  // Olası etiket varyantları: "Adı Soyadı", "Ad Soyad", "Ad / Soyad", "Name"
+  const labelRe = /(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:/i;
 
-  // Fallback: before "K:" without AKTS
-  m = normalized.match(/Adı Soyadı\s+(.+?)\s+K:/i);
-  if (m) return m[1].trim();
+  // Etiket + değer + sonraki anahtar kelime (K:, AKTS, Bölüm, GNO, Program, Fakülte)
+  const stopRe = /\s+(?:K:\s*AKTS|AKTS|K:|Bölüm|GNO|Program|Fakülte|Faculty|Dept)/i;
 
-  // Fallback: before "Bölüm"
-  m = normalized.match(/Adı Soyadı\s+(.+?)\s+Bölüm/i);
-  if (m) return m[1].trim();
+  const labelMatch = normalized.match(labelRe);
+  if (labelMatch) {
+    const afterLabel = normalized.slice(labelMatch.index + labelMatch[0].length);
+    const stopMatch = afterLabel.match(stopRe);
+    const raw = stopMatch ? afterLabel.slice(0, stopMatch.index) : afterLabel.split('\n')[0];
+    const candidate = raw.replace(/[:\-]/, '').trim();
+    if (candidate.length >= 3) return candidate;
+  }
 
-  // Fallback: before "GNO:"
-  m = normalized.match(/Adı Soyadı\s+(.+?)\s+GNO:/i);
-  if (m) return m[1].trim();
+  // Son çare: sayfanın ilk satırlarında tamamen büyük harfli 2+ kelime grubu
+  for (const line of normalized.split('\n').slice(0, 10)) {
+    const trimmed = line.trim();
+    // En az 2 büyük harfli Türkçe kelime, her biri ≥2 harf
+    if (/^([A-ZÇĞİÖŞÜ]{2,}\s+){1,}[A-ZÇĞİÖŞÜ]{2,}$/.test(trimmed)) {
+      // Ders kodu gibi görünmüyorsa (3 harf + rakam) isim olabilir
+      if (!/\b[A-Z]{2,4}\d{3}\b/.test(trimmed)) return trimmed;
+    }
+  }
 
   return 'Bilinmiyor';
 }
@@ -191,14 +220,26 @@ function isLisansPage(pageText) {
 function isRelevantPage(pageText) {
   const text = normalizeText(pageText).toUpperCase();
 
-  return [
-    'BİL240', 'BİL265', 'BİL300', 'BİL324', 'BİL332',
-    'BİL343', 'BİL344', 'BİL367', 'BİL386', 'BİL493',
-    'CSE240', 'CSE265', 'CSE300', 'CSE324', 'CSE332',
-    'CSE343', 'CSE344', 'CSE367', 'CSE386', 'CSE493',
-    'BIL240', 'BIL265', 'BIL300', 'BIL324', 'BIL332',
-    'BIL343', 'BIL344', 'BIL367', 'BIL386', 'BIL493'
-  ].some(code => text.includes(code));
+  // Takip edilen 20 dersin tüm kod varyantlarını kontrol et
+  // (üst seviye BİL + MAT/FİZ + alt seviye BİL)
+  const ALL_TRACKED_CODES = [
+    // BİL varyantları
+    'BİL101','BİL105','BİL122','BİL124','BİL240','BİL265',
+    'BİL300','BİL324','BİL332','BİL343','BİL344','BİL367','BİL386','BİL493',
+    // BIL (noktasız I) varyantları
+    'BIL101','BIL105','BIL122','BIL124','BIL240','BIL265',
+    'BIL300','BIL324','BIL332','BIL343','BIL344','BIL367','BIL386','BIL493',
+    // CSE varyantları
+    'CSE101','CSE105','CSE122','CSE124','CSE240','CSE265',
+    'CSE300','CSE324','CSE332','CSE343','CSE344','CSE367','CSE386','CSE493',
+    // MAT / MATH
+    'MAT151','MAT152','MATH151','MATH152',
+    // FİZ / PHYS
+    'FİZ103','FİZ104','FİZ105','FİZ110',
+    'FIZ103','FIZ104','FIZ105','FIZ110',
+    'PHYS103','PHYS104','PHYS105','PHYS110',
+  ];
+  return ALL_TRACKED_CODES.some(code => text.includes(code));
 }
 
 function mapCanonicalCourse(code) {
@@ -859,9 +900,14 @@ function parseStudentPage(pageText) {
     return conf < 0.75;
   });
 
-  const avgConfidence = TRACKED_COURSES
-    .map(course => courseDiagnostics[course]?.confidence || 0)
-    .reduce((sum, value) => sum + value, 0) / TRACKED_COURSES.length;
+  // Sadece transkriptte bulunan dersler üzerinden ortalama al;
+  // alınmamış dersler (confidence=0) ortalamayı yanıltıcı biçimde düşürmesin.
+  const foundCourses = TRACKED_COURSES.filter(course => (courseDiagnostics[course]?.confidence || 0) > 0);
+  const avgConfidence = foundCourses.length > 0
+    ? foundCourses
+        .map(course => courseDiagnostics[course].confidence)
+        .reduce((sum, v) => sum + v, 0) / foundCourses.length
+    : 0;
 
   return {
     studentNo,
@@ -1006,9 +1052,11 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
 
     const relevantPages = pages.filter(page => {
       const normalized = normalizeText(page);
+      // Öğrenci No içeren lisans transkript sayfası olmalı
       if (!normalized.includes('Öğrenci No')) return false;
       if (!isLisansPage(normalized)) return false;
-      if (!isRelevantPage(normalized)) return false;
+      // Takip edilen derslerden en az biri varsa dahil et;
+      // yoksa da dahil et (öğrenci no eşleştirmesi için sayfaya ihtiyaç var)
       return true;
     });
 
@@ -1035,6 +1083,16 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
         const chunkResults = await Promise.all(
           chunk.map(async (regexResult, idx) => {
             let result;
+            // Gemini sadece sayfada GEMINI_COURSES'dan en az biri varsa çağrılır
+            const pageNorm = normalizeText(chunkPages[idx]).toUpperCase();
+            const pageHasGeminiCourse = GEMINI_COURSES.some(c =>
+              pageNorm.includes(c.toUpperCase().replace(/İ/g, 'I').replace(/Ş/g,'S').replace(/Ğ/g,'G'))
+            );
+            if (!pageHasGeminiCourse) {
+              doneCount++;
+              _analyzeProgress = { phase: 'gemini', done: doneCount, total };
+              return regexResult;
+            }
             try {
               const { courses, studentName, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
                 chunkPages[idx], apiKey, regexResult.courses

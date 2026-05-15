@@ -314,7 +314,7 @@ analyzeBtn.addEventListener('click', async () => {
         </div>
       </div>
       <div class="file-path">📄 ${data.filePath}</div>
-      <div class="parse-summary">${parserInfo}</div>
+      <div class="parse-summary" style="display:none">${parserInfo}</div>
       ${listInfo}`;
 
     // Reset toolbar state
