@@ -21,6 +21,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
     height: 800,
+    icon: path.join(__dirname, 'logo.jpeg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -90,7 +91,8 @@ const GEMINI_COURSES = [
   'BİL240', 'BİL265', 'BİL300',
   'BİL324', 'BİL332',
   'BİL343', 'BİL344', 'BİL367', 'BİL386',
-  'BİL493'
+  'BİL493',
+  'MAT151', 'MAT152'
 ];
 
 // Gemini 2.5 Flash fiyatlandırması ($/1M token, Mayıs 2026)
@@ -322,6 +324,13 @@ function buildEmptyCourseMap(defaultValueFactory) {
 function pickBestCandidate(candidates) {
   if (!candidates || candidates.length === 0) return null;
 
+  // Ders birden fazla alınmışsa (farklı notlar = conflict) en son satırdaki notu kullan.
+  const uniqueGrades = new Set(candidates.map(c => c.grade));
+  if (uniqueGrades.size > 1) {
+    return [...candidates].sort((a, b) => b.lineIndex - a.lineIndex)[0];
+  }
+
+  // Tek not varsa en yüksek confidence'lı, eşit ise en son satırdaki.
   const sorted = [...candidates].sort((a, b) => {
     if (a.confidence !== b.confidence) return b.confidence - a.confidence;
     return b.lineIndex - a.lineIndex;
@@ -508,15 +517,24 @@ function normalizeNameForMatch(name) {
 // Transkriptteki isim kelimelerinin TAMAMI liste girişindeki isimde geçiyorsa eşleşir.
 // Böylece listede önde fazladan kelime olsa da eşleşme çalışır.
 function nameWordsMatch(transcriptName, listEntryName) {
+  // Türkçe karakterleri ASCII eşdeğerine indirgeyerek karşılaştır.
+  // Farklı kaynaklarda İ/I, Ş/S gibi tutarsızlıklar olabileceğinden
+  // tüm varyantlar aynı forma çekilir.
   const normalize = s => String(s || '')
-    .replace(/ı/g, 'İ').replace(/i/g, 'İ')
-    .toUpperCase().trim().split(/\s+/).filter(Boolean);
+    .normalize('NFC')
+    .toUpperCase()
+    .replace(/İ/g, 'I').replace(/I\u0307/g, 'I') // İ ve birleşik varyant
+    .replace(/Ş/g, 'S').replace(/Ğ/g, 'G')
+    .replace(/Ö/g, 'O').replace(/Ü/g, 'U')
+    .replace(/Ç/g, 'C').replace(/Â/g, 'A')
+    .replace(/Î/g, 'I').replace(/Û/g, 'U')
+    .trim().split(/\s+/).filter(Boolean);
 
   const transcriptWords = normalize(transcriptName);
   const listWords       = normalize(listEntryName);
   if (transcriptWords.length === 0 || listWords.length === 0) return false;
 
-  // İki yönlü alt-küme kontrolü: kısa olan tarafın tüm kelimeleri uzun olan tarafta mı?
+  // İki yönlü alt-küme kontrolü: kısa tarafın tüm kelimeleri uzun tarafta mı?
   const [shorter, longerSet] = transcriptWords.length <= listWords.length
     ? [transcriptWords, new Set(listWords)]
     : [listWords,       new Set(transcriptWords)];
@@ -580,6 +598,36 @@ function parseStudentListFromPages(pages) {
 // Progress state for polling
 let _analyzeProgress = null;
 ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
+
+ipcMain.handle('save-export-file', async (_event, { format, content, defaultFilename }) => {
+  const extMap  = { csv: 'csv', word: 'doc', pdf: 'pdf' };
+  const nameMap = { csv: 'CSV Dosyası', word: 'Word Belgesi', pdf: 'PDF Belgesi' };
+  const result = await dialog.showSaveDialog({
+    title: 'Dışa Aktar',
+    defaultPath: defaultFilename,
+    filters: [
+      { name: nameMap[format], extensions: [extMap[format]] },
+      { name: 'Tüm Dosyalar', extensions: ['*'] }
+    ]
+  });
+  if (result.canceled) return { canceled: true };
+
+  try {
+    if (format === 'pdf') {
+      const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
+      const dataUrl = 'data:text/html;base64,' + Buffer.from(content, 'utf-8').toString('base64');
+      await win.loadURL(dataUrl);
+      const pdfData = await win.webContents.printToPDF({ landscape: true, marginsType: 1, printBackground: true });
+      win.destroy();
+      fs.writeFileSync(result.filePath, pdfData);
+    } else {
+      fs.writeFileSync(result.filePath, content, 'utf-8');
+    }
+    return { canceled: false, filePath: result.filePath };
+  } catch (err) {
+    return { canceled: false, error: err.message };
+  }
+});
 
 ipcMain.handle('pick-student-list-pdf', async () => {
   try {

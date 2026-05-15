@@ -9,6 +9,9 @@ const toolbarEl    = document.getElementById('toolbar');
 const searchEl     = document.getElementById('searchInput');
 const geminiKeyEl  = document.getElementById('geminiApiKey');
 const saveKeyBtn   = document.getElementById('saveKeyBtn');
+const exportCsvBtn  = document.getElementById('exportCsvBtn');
+const exportWordBtn = document.getElementById('exportWordBtn');
+const exportPdfBtn  = document.getElementById('exportPdfBtn');
 
 // Load saved API key
 if (geminiKeyEl) geminiKeyEl.value = localStorage.getItem('geminiApiKey') || '';
@@ -328,3 +331,102 @@ analyzeBtn.addEventListener('click', async () => {
     analyzeBtn.disabled = false;
   }
 });
+
+/* ── Export ── */
+function getExportDate() {
+  return new Date().toLocaleDateString('tr-TR').replace(/\./g, '-');
+}
+
+function buildExportCSV() {
+  const courseKeys = allStudents.length > 0 ? Object.keys(allStudents[0].courses) : [];
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const headers = [
+    'Öğrenci No', 'Ad Soyad', 'Listede',
+    'Staj I', 'Staj II', 'BİL493 Alabilir', 'BİL494 Alabilir',
+    ...courseKeys
+  ];
+  const rows = [
+    headers.map(esc).join(','),
+    ...allStudents.map(s => [
+      s.studentNo, s.studentName,
+      s.inList !== false ? 'Evet' : 'Hayır',
+      s.staj1Eligible ? 'Alabilir' : 'Alamaz',
+      s.staj2Eligible ? 'Alabilir' : 'Alamaz',
+      s.bil493Eligible ? 'Alabilir' : 'Alamaz',
+      s.bil494Eligible ? 'Alabilir' : 'Alamaz',
+      ...courseKeys.map(c => s.courses[c] || '')
+    ].map(esc).join(',')),
+    ...missingStudents.map(s => [
+      s.studentNo, s.studentName, 'Evet',
+      'Transkript Yok', 'Transkript Yok', 'Transkript Yok', 'Transkript Yok',
+      ...courseKeys.map(() => '')
+    ].map(esc).join(','))
+  ];
+  return '\uFEFF' + rows.join('\r\n'); // BOM → Excel Türkçe karakter desteği
+}
+
+function buildExportHTML() {
+  const courseKeys = allStudents.length > 0 ? Object.keys(allStudents[0].courses) : [];
+  const elig = (v) => v
+    ? '<span style="color:#166534;font-weight:700">✓</span>'
+    : '<span style="color:#991b1b">✗</span>';
+
+  const studentRows = allStudents.map(s => `
+    <tr style="${s.inList === false ? 'background:#fffbeb' : ''}">
+      <td>${s.studentNo}</td>
+      <td>${s.studentName || '-'}</td>
+      <td>${s.inList !== false ? 'Evet' : '<span style="color:#92400e">Hayır</span>'}</td>
+      <td style="text-align:center">${elig(s.staj1Eligible)}</td>
+      <td style="text-align:center">${elig(s.staj2Eligible)}</td>
+      <td style="text-align:center">${elig(s.bil493Eligible)}</td>
+      <td style="text-align:center">${elig(s.bil494Eligible)}</td>
+      ${courseKeys.map(c => `<td style="text-align:center">${s.courses[c] || '-'}</td>`).join('')}
+    </tr>`).join('');
+
+  const missingRows = missingStudents.map(s => `
+    <tr style="background:#fef9c3">
+      <td>${s.studentNo}</td>
+      <td>${s.studentName || '-'}</td>
+      <td>Evet</td>
+      <td colspan="${4 + courseKeys.length}" style="color:#92400e">⚠ Transkript bulunamadı</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 10px; margin: 20px; }
+  h2 { font-size: 13px; margin-bottom: 6px; }
+  p  { font-size: 10px; color: #555; margin: 0 0 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #1e3a5f; color: #fff; padding: 5px 7px; font-size: 9px; text-align: left; }
+  td { padding: 4px 7px; border-bottom: 1px solid #e2e8f0; }
+  tr:nth-child(even) td { background: #f8fafc; }
+</style></head><body>
+<h2>Staj / BİL493 / BİL494 Uygunluk Raporu</h2>
+<p>Toplam: ${allStudents.length} öğrenci &nbsp;|&nbsp;
+   Staj I: ${allStudents.filter(s=>s.staj1Eligible).length} &nbsp;|&nbsp;
+   Staj II: ${allStudents.filter(s=>s.staj2Eligible).length} &nbsp;|&nbsp;
+   BİL493: ${allStudents.filter(s=>s.bil493Eligible).length} &nbsp;|&nbsp;
+   BİL494: ${allStudents.filter(s=>s.bil494Eligible).length} &nbsp;|&nbsp;
+   Tarih: ${new Date().toLocaleDateString('tr-TR')}</p>
+<table>
+  <thead><tr>
+    <th>Öğrenci No</th><th>Ad Soyad</th><th>Listede</th>
+    <th>Staj I</th><th>Staj II</th><th>BİL493</th><th>BİL494</th>
+    ${courseKeys.map(c => `<th>${c}</th>`).join('')}
+  </tr></thead>
+  <tbody>${studentRows}${missingRows}</tbody>
+</table></body></html>`;
+}
+
+async function doExport(format) {
+  if (allStudents.length === 0) return;
+  const date = getExportDate();
+  const map = { csv: `staj-rapor-${date}.csv`, word: `staj-rapor-${date}.doc`, pdf: `staj-rapor-${date}.pdf` };
+  const content = format === 'csv' ? buildExportCSV() : buildExportHTML();
+  const result = await window.electronAPI.saveExportFile({ format, content, defaultFilename: map[format] });
+  if (result?.error) alert('Dışa aktarma hatası: ' + result.error);
+}
+
+if (exportCsvBtn)  exportCsvBtn.addEventListener('click',  () => doExport('csv'));
+if (exportWordBtn) exportWordBtn.addEventListener('click', () => doExport('word'));
+if (exportPdfBtn)  exportPdfBtn.addEventListener('click',  () => doExport('pdf'));
