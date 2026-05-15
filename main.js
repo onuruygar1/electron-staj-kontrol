@@ -48,18 +48,50 @@ const PASSING_GRADES = new Set([
 ]);
 
 const COURSE_ALIASES = {
+  // Temel CS dersleri
+  BİL101: ['BİL101', 'BIL101', 'CSE101'],
+  BİL105: ['BİL105', 'BIL105', 'CSE105'],
+  BİL122: ['BİL122', 'BIL122', 'CSE122'],
+  BİL124: ['BİL124', 'BIL124', 'CSE124'],
   BİL240: ['BİL240', 'BIL240', 'CSE240'],
   BİL265: ['BİL265', 'BIL265', 'CSE265'],
   BİL300: ['BİL300', 'BIL300', 'CSE300'],
+  BİL324: ['BİL324', 'BIL324', 'CSE324'],
+  BİL332: ['BİL332', 'BIL332', 'CSE332'],
   BİL343: ['BİL343', 'BIL343', 'CSE343'],
-  BİL367: ['BİL367', 'BIL367', 'CSE367'],
   BİL344: ['BİL344', 'BIL344', 'CSE344'],
-  BİL386: ['BİL386', 'BIL386', 'CSE386']
+  BİL367: ['BİL367', 'BIL367', 'CSE367'],
+  BİL386: ['BİL386', 'BIL386', 'CSE386'],
+  BİL493: ['BİL493', 'BIL493', 'CSE493'],
+  // Matematik
+  MAT151: ['MAT151', 'MATH151'],
+  MAT152: ['MAT152', 'MATH152'],
+  // Fizik
+  FİZ103: ['FİZ103', 'FIZ103', 'PHYS103'],
+  FİZ104: ['FİZ104', 'FIZ104', 'PHYS104'],
+  FİZ105: ['FİZ105', 'FIZ105', 'PHYS105'],
+  FİZ110: ['FİZ110', 'FIZ110', 'PHYS110'],
 };
 
 const STAJ1_REQUIRED = ['BİL240', 'BİL265'];
 const STAJ2_REQUIRED = ['BİL343', 'BİL367', 'BİL344', 'BİL386'];
+
+// BİL493 ön koşul kuralı: Bölüm derslerinden en az 4 tanesi + tüm ortak dersler ≥ D
+const BİL493_BOLUM     = ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'];
+const BİL493_BOLUM_MIN = 4;
+const BİL493_ORTAK     = ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
+                           'BİL101', 'BİL105', 'BİL122', 'BİL124'];
+
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
+
+// Gemini'ye sadece karıştırılabilecek staj/bölüm dersleri gönderilir;
+// MAT/FİZ/BİL101-124 regex ile zaten doğru okunuyor, prompt boyutunu küçültmek için dışarıda bırakılır.
+const GEMINI_COURSES = [
+  'BİL240', 'BİL265', 'BİL300',
+  'BİL324', 'BİL332',
+  'BİL343', 'BİL344', 'BİL367', 'BİL386',
+  'BİL493'
+];
 
 // Gemini 2.5 Flash fiyatlandırması ($/1M token, Mayıs 2026)
 const GEMINI_INPUT_PRICE_PER_1M  = 0.075;
@@ -158,9 +190,12 @@ function isRelevantPage(pageText) {
   const text = normalizeText(pageText).toUpperCase();
 
   return [
-    'BİL240', 'BİL265', 'BİL300', 'BİL343', 'BİL344', 'BİL367', 'BİL386',
-    'CSE240', 'CSE265', 'CSE300', 'CSE343', 'CSE344', 'CSE367', 'CSE386',
-    'BIL240', 'BIL265', 'BIL300', 'BIL343', 'BIL344', 'BIL367', 'BIL386'
+    'BİL240', 'BİL265', 'BİL300', 'BİL324', 'BİL332',
+    'BİL343', 'BİL344', 'BİL367', 'BİL386', 'BİL493',
+    'CSE240', 'CSE265', 'CSE300', 'CSE324', 'CSE332',
+    'CSE343', 'CSE344', 'CSE367', 'CSE386', 'CSE493',
+    'BIL240', 'BIL265', 'BIL300', 'BIL324', 'BIL332',
+    'BIL343', 'BIL344', 'BIL367', 'BIL386', 'BIL493'
   ].some(code => text.includes(code));
 }
 
@@ -538,6 +573,10 @@ function parseStudentListFromPages(pages) {
   };
 }
 
+// Progress state for polling
+let _analyzeProgress = null;
+ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
+
 ipcMain.handle('pick-student-list-pdf', async () => {
   try {
     const result = await dialog.showOpenDialog({
@@ -595,8 +634,8 @@ function getRelevantTextWindow(pageText, trailingBuffer = 800, maxChars = 25000)
   return pageText.substring(0, Math.min(cutoff, maxChars));
 }
 
-async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
-  const regexSummary = TRACKED_COURSES
+async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses, _retryCount = 0) {
+  const regexSummary = GEMINI_COURSES
     .map(c => `${c}: ${regexCourses[c] || 'bulunamadı'}`)
     .join(', ');
 
@@ -628,7 +667,7 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             responseMimeType: 'application/json',
-            maxOutputTokens: 512,
+            maxOutputTokens: 1024,
             thinkingConfig: { thinkingBudget: 0 }
           }
         })
@@ -641,9 +680,14 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
   if (!response.ok) {
     const errBody = await response.text();
     if (response.status === 429) {
-      const waitMs = parseInt(response.headers.get('Retry-After') || '65', 10) * 1000;
-      await new Promise(r => setTimeout(r, Math.min(waitMs, 120000)));
-      return callGeminiForStudentWithContext(pageText, apiKey, regexCourses);
+      if (_retryCount >= 3) throw new Error('Gemini rate limit: 3 denemede 429 alındı, atlanıyor');
+      const base = parseInt(response.headers.get('Retry-After') || '30', 10) * 1000;
+      const jitter = Math.random() * 10000;
+      const waitMs = Math.min(base + jitter, 90000);
+      _analyzeProgress = { ..._analyzeProgress, rateLimited: true, waitUntil: Date.now() + waitMs };
+      await new Promise(r => setTimeout(r, waitMs));
+      _analyzeProgress = { ..._analyzeProgress, rateLimited: false };
+      return callGeminiForStudentWithContext(pageText, apiKey, regexCourses, _retryCount + 1);
     }
     throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 200)}`);
   }
@@ -781,13 +825,8 @@ function parseStudentPage(pageText) {
 function evaluateStudent(student) {
   const staj1Details = STAJ1_REQUIRED.map(code => {
     const grade = student.courses[code];
-    return {
-      code,
-      grade,
-      passed: hasPassingGrade(grade)
-    };
+    return { code, grade, passed: hasPassingGrade(grade) };
   });
-
   const staj1Eligible = staj1Details.every(item => item.passed);
 
   const staj1CourseGrade = student.courses['BİL300'];
@@ -795,17 +834,31 @@ function evaluateStudent(student) {
 
   const staj2Details = STAJ2_REQUIRED.map(code => {
     const grade = student.courses[code];
-    return {
-      code,
-      grade,
-      passed: hasPassingGrade(grade)
-    };
+    return { code, grade, passed: hasPassingGrade(grade) };
   });
-
   const staj2Eligible =
     staj1Eligible &&
     staj1TakenAndPassed &&
     staj2Details.every(item => item.passed);
+
+  // BİL493 ön koşul: bölüm derslerinden en az 4 tanesi + tüm ortak dersler ≥ D
+  const bil493BolumDetails = BİL493_BOLUM.map(code => {
+    const grade = student.courses[code];
+    return { code, grade, passed: hasPassingGrade(grade) };
+  });
+  const bil493BolumPassedCount = bil493BolumDetails.filter(i => i.passed).length;
+
+  const bil493OrtakDetails = BİL493_ORTAK.map(code => {
+    const grade = student.courses[code];
+    return { code, grade, passed: hasPassingGrade(grade) };
+  });
+  const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
+
+  const bil493Eligible = bil493BolumPassedCount >= BİL493_BOLUM_MIN && bil493OrtakAllPassed;
+
+  // BİL494 ön koşul: BİL493 tamamlanmış olmalı
+  const bil493AlreadyPassed = hasPassingGrade(student.courses['BİL493']);
+  const bil494Eligible = bil493AlreadyPassed;
 
   return {
     studentNo: student.studentNo,
@@ -817,6 +870,13 @@ function evaluateStudent(student) {
     staj1TakenAndPassed,
     staj2Details,
     staj2Eligible,
+    bil493BolumDetails,
+    bil493BolumPassedCount,
+    bil493OrtakDetails,
+    bil493OrtakAllPassed,
+    bil493Eligible,
+    bil493AlreadyPassed,
+    bil494Eligible,
     parseDiagnostics: student.parseDiagnostics,
     _debug: student._debug
   };
@@ -905,31 +965,43 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
     if (apiKey) {
       // Önce tüm öğrenciler için regex parser çalıştır
       const regexResults = relevantPages.map(parseStudentPage);
+      const total = regexResults.length;
+      let doneCount = 0;
 
-      // Sonra 10'lu gruplar halinde paralel Gemini doğrulaması
-      const CONCURRENCY = 10;
+      _analyzeProgress = { phase: 'gemini-start', done: 0, total };
+
+      // 5'li gruplar halinde paralel Gemini doğrulaması — her öğrenci bitince progress gönder
+      const CONCURRENCY = 5;
       for (let i = 0; i < regexResults.length; i += CONCURRENCY) {
         const chunk = regexResults.slice(i, i + CONCURRENCY);
         const chunkPages = relevantPages.slice(i, i + CONCURRENCY);
 
         const chunkResults = await Promise.all(
           chunk.map(async (regexResult, idx) => {
+            let result;
             try {
               const { courses, studentName, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
                 chunkPages[idx], apiKey, regexResult.courses
               );
               totalPromptTokens += promptTokens;
               totalOutputTokens += outputTokens;
-              return {
+              // Gemini sadece GEMINI_COURSES'u doğrular; MAT/FİZ/BİL101-124 için regex değerini koru
+              const mergedCourses = { ...regexResult.courses };
+              for (const c of GEMINI_COURSES) mergedCourses[c] = courses[c];
+              result = {
                 ...regexResult,
                 studentName: studentName || regexResult.studentName,
-                courses,
+                courses: mergedCourses,
                 parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
               };
             } catch (err) {
               console.warn(`Gemini hatası (${regexResult.studentNo}): ${err.message} — regex kullanılıyor`);
-              return regexResult;
+              result = regexResult;
             }
+            doneCount++;
+            _analyzeProgress = { phase: 'gemini', done: doneCount, total };
+            console.log(`Gemini: ${doneCount}/${total} — ${result.studentName || result.studentNo}`);
+            return result;
           })
         );
         parseResults.push(...chunkResults);
@@ -949,24 +1021,30 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
           .map(e => ({ studentNo: e.studentNo, studentName: e.name }))
       : [];
 
+    // Her öğrenciye inList flag ekle: listede yer alıyor mu?
+    const studentsTagged = students.map(s => ({
+      ...s,
+      inList: !filterEntries || filterEntries.some(e => nameWordsMatch(s.studentName, e.name))
+    }));
+
     const estimatedCostUSD =
       (totalPromptTokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_1M +
       (totalOutputTokens / 1_000_000) * GEMINI_OUTPUT_PRICE_PER_1M;
 
-    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}${apiKey ? ` | Gemini kullanıldı | ${totalPromptTokens}p + ${totalOutputTokens}o token | ~$${estimatedCostUSD.toFixed(4)}` : ''}`);
+    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${studentsTagged.length}${apiKey ? ` | Gemini kullanıldı | ${totalPromptTokens}p + ${totalOutputTokens}o token | ~$${estimatedCostUSD.toFixed(4)}` : ''}`);
 
-    const parseSummary = buildParseSummary(students);
+    const parseSummary = buildParseSummary(studentsTagged);
 
     return {
       canceled: false,
       filePath,
       totalPages,
-      totalStudents: students.length,
+      totalStudents: studentsTagged.length,
       parseSummary,
       geminiUsed: Boolean(apiKey),
       tokenStats: apiKey ? { totalPromptTokens, totalOutputTokens, estimatedCostUSD } : null,
       missingStudents,
-      students
+      students: studentsTagged
     };
   } catch (error) {
     console.error('PDF analiz hatası:', error);
