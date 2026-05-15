@@ -571,10 +571,14 @@ function parseStudentListFromPages(pages) {
       const studentNo = noMatch[1];
       if (seenNos.has(studentNo)) continue;
 
-      // Numara sonrasındaki büyük harfli Türkçe kelimeler (≥3 harf) → isim
+      // İsim: önce numara sonrasına bak, yoksa numara öncesine bak
       // 2 harfli not kodları (AA/BB/CC/XX…) ve kısa token'lar bu şekilde elenir
-      const afterNo = line.slice(noMatch.index + studentNo.length);
-      const nameWords = [...afterNo.matchAll(/[A-ZÇĞİÖŞÜ]{3,}/g)].map(m => m[0]);
+      const afterNo  = line.slice(noMatch.index + studentNo.length);
+      const beforeNo = line.slice(0, noMatch.index);
+      let nameWords = [...afterNo.matchAll(/[A-ZÇĞİÖŞÜ]{3,}/g)].map(m => m[0]);
+      if (nameWords.length < 2) {
+        nameWords = [...beforeNo.matchAll(/[A-ZÇĞİÖŞÜ]{3,}/g)].map(m => m[0]);
+      }
       if (nameWords.length < 2) continue; // en az 2 isim kelimesi olmalı
 
       seenNos.add(studentNo);
@@ -1066,17 +1070,22 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       .map(evaluateStudent)
       .filter(student => student.studentNo !== 'Bilinmiyor');
 
-    // Liste verilmişse: isim eşleşmesi Gemini'nin çıkardığı adla yapılır
+    // Öğrenci eşleştirme: önce numara (kesin), numara yoksa isim karşılaştırması
+    const studentMatches = (s, e) =>
+      (s.studentNo && e.studentNo && s.studentNo === e.studentNo) ||
+      nameWordsMatch(s.studentName, e.name);
+
+    // Liste verilmişse: eşleşmeyen liste girişlerini bul
     const missingStudents = filterEntries
       ? filterEntries
-          .filter(e => !students.some(s => nameWordsMatch(s.studentName, e.name)))
+          .filter(e => !students.some(s => studentMatches(s, e)))
           .map(e => ({ studentNo: e.studentNo, studentName: e.name }))
       : [];
 
     // Her öğrenciye inList flag ekle: listede yer alıyor mu?
     const studentsTagged = students.map(s => ({
       ...s,
-      inList: !filterEntries || filterEntries.some(e => nameWordsMatch(s.studentName, e.name))
+      inList: !filterEntries || filterEntries.some(e => studentMatches(s, e))
     }));
 
     const estimatedCostUSD =
