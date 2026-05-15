@@ -1,10 +1,14 @@
-const analyzeBtn  = document.getElementById('analyzeBtn');
-const summaryEl   = document.getElementById('summary');
-const resultsEl   = document.getElementById('results');
-const toolbarEl   = document.getElementById('toolbar');
-const searchEl    = document.getElementById('searchInput');
-const geminiKeyEl = document.getElementById('geminiApiKey');
-const saveKeyBtn  = document.getElementById('saveKeyBtn');
+const analyzeBtn   = document.getElementById('analyzeBtn');
+const listBtn      = document.getElementById('listBtn');
+const listStatusEl = document.getElementById('listStatus');
+const listStatusTx = document.getElementById('listStatusText');
+const listClearBtn = document.getElementById('listClearBtn');
+const summaryEl    = document.getElementById('summary');
+const resultsEl    = document.getElementById('results');
+const toolbarEl    = document.getElementById('toolbar');
+const searchEl     = document.getElementById('searchInput');
+const geminiKeyEl  = document.getElementById('geminiApiKey');
+const saveKeyBtn   = document.getElementById('saveKeyBtn');
 
 // Load saved API key
 if (geminiKeyEl) geminiKeyEl.value = localStorage.getItem('geminiApiKey') || '';
@@ -17,8 +21,37 @@ if (saveKeyBtn) {
   });
 }
 
-let allStudents  = [];
-let activeFilter = 'all'; // 'all' | 'staj1' | 'staj2'
+let allStudents      = [];
+let missingStudents  = [];
+let activeFilter     = 'all'; // 'all' | 'staj1' | 'staj2'
+let studentListData  = null;  // { studentNumbers: string[], courseCode, courseName, totalFound }
+
+/* ── Öğrenci listesi buton ── */
+listBtn.addEventListener('click', async () => {
+  listBtn.disabled = true;
+  try {
+    const data = await window.electronAPI.pickStudentListPdf();
+    if (data.canceled) return;
+    studentListData = data;
+    const courseLabel = data.courseCode
+      ? `${data.courseCode}${data.courseName ? ' – ' + data.courseName : ''}`
+      : '';
+    listStatusTx.textContent = `${data.totalFound} öğrenci yüklendi${courseLabel ? ' · ' + courseLabel : ''}`;
+    listStatusEl.style.display = 'flex';
+    analyzeBtn.disabled = false;
+  } catch (err) {
+    alert('Liste yüklenemedi: ' + err.message);
+  } finally {
+    listBtn.disabled = false;
+  }
+});
+
+listClearBtn.addEventListener('click', () => {
+  studentListData = null;
+  listStatusEl.style.display = 'none';
+  listStatusTx.textContent = '';
+  analyzeBtn.disabled = true;
+});
 
 /* ── Helpers ── */
 function pill(ok, yesText, noText) {
@@ -97,6 +130,19 @@ function renderStudent(student) {
     </div>`;
 }
 
+function renderMissingStudent(s) {
+  return `
+    <div class="card missing">
+      <div class="card-head">
+        <div>
+          <div class="s-name">${s.studentName || ''}</div>
+          <div class="s-no">${s.studentNo}</div>
+          <div class="missing-badge">⚠ Transkript bulunamadı</div>
+        </div>
+      </div>
+    </div>`;
+}
+
 /* ── Filter + search ── */
 function applyFilters() {
   const query = searchEl.value.trim().toLowerCase();
@@ -117,8 +163,10 @@ function applyFilters() {
       : `${filtered.length} / ${allStudents.length} öğrenci`;
 
   resultsEl.innerHTML = filtered.length
-    ? filtered.map(renderStudent).join('')
-    : '<div class="msg" style="margin-top:16px">Eşleşen öğrenci bulunamadı.</div>';
+    ? filtered.map(renderStudent).join('') + missingStudents.map(renderMissingStudent).join('')
+    : missingStudents.length
+      ? missingStudents.map(renderMissingStudent).join('')
+      : '<div class="msg" style="margin-top:16px">Eşleşen öğrenci bulunamadı.</div>';
 }
 
 /* ── Filter button clicks ── */
@@ -140,6 +188,7 @@ searchEl.addEventListener('input', applyFilters);
 
 /* ── PDF analyze ── */
 analyzeBtn.addEventListener('click', async () => {
+  if (!studentListData) return;
   analyzeBtn.disabled = true;
   summaryEl.innerHTML = '<div class="msg">⏳ PDF okunuyor, lütfen bekleyin…</div>';
   resultsEl.innerHTML = '';
@@ -147,14 +196,17 @@ analyzeBtn.addEventListener('click', async () => {
 
   try {
     const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
-    const data = await window.electronAPI.pickPdfAndAnalyze(apiKey ? { apiKey } : {});
+    const analyzeOptions = { ...(apiKey ? { apiKey } : {}) };
+    if (studentListData) analyzeOptions.filterStudentEntries = studentListData.studentEntries;
+    const data = await window.electronAPI.pickPdfAndAnalyze(analyzeOptions);
 
     if (data.canceled) {
       summaryEl.innerHTML = '<div class="msg">İşlem iptal edildi.</div>';
       return;
     }
 
-    allStudents = data.students;
+    allStudents     = data.students;
+    missingStudents = data.missingStudents || [];
     const staj1Count = data.students.filter(s => s.staj1Eligible).length;
     const staj2Count = data.students.filter(s => s.staj2Eligible).length;
     const parseSummary = data.parseSummary || {};
@@ -167,8 +219,20 @@ analyzeBtn.addEventListener('click', async () => {
       : 0;
 
     const parserInfo = geminiUsed
-      ? `<span class="gemini-badge">Gemini 2.0 Flash</span>`
+      ? (() => {
+          const ts = data.tokenStats;
+          const tokenLine = ts
+            ? ` · ${ts.totalPromptTokens.toLocaleString('tr-TR')} prompt + ${ts.totalOutputTokens.toLocaleString('tr-TR')} output token · ~$${ts.estimatedCostUSD.toFixed(4)}`
+            : '';
+          return `<span class="gemini-badge">Gemini 2.5 Flash</span>${tokenLine}`;
+        })()
       : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
+
+    const listInfo = studentListData && missingStudents.length > 0
+      ? `<div class="parse-summary" style="color:#b91c1c">⚠ ${missingStudents.length} öğrencinin transkripti bulunamadı</div>`
+      : studentListData
+        ? `<div class="parse-summary" style="color:#166534">✓ Listedeki tüm öğrencilerin transkripti bulundu</div>`
+        : '';
 
     summaryEl.innerHTML = `
       <div class="stats">
@@ -190,7 +254,8 @@ analyzeBtn.addEventListener('click', async () => {
         </div>
       </div>
       <div class="file-path">📄 ${data.filePath}</div>
-      <div class="parse-summary">${parserInfo}</div>`;
+      <div class="parse-summary">${parserInfo}</div>
+      ${listInfo}`;
 
     // Reset toolbar state
     activeFilter = 'all';

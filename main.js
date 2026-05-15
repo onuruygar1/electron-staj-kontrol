@@ -61,6 +61,10 @@ const STAJ1_REQUIRED = ['BİL240', 'BİL265'];
 const STAJ2_REQUIRED = ['BİL343', 'BİL367', 'BİL344', 'BİL386'];
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
 
+// Gemini 2.5 Flash fiyatlandırması ($/1M token, Mayıs 2026)
+const GEMINI_INPUT_PRICE_PER_1M  = 0.075;
+const GEMINI_OUTPUT_PRICE_PER_1M = 0.300;
+
 const GRADE_REGEX = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
 
 function normalizeText(text) {
@@ -453,6 +457,138 @@ function applyGlobalFallback(pageText, courses, diagnostics) {
   }
 }
 
+function normalizeNameForMatch(name) {
+  return String(name || '')
+    .replace(/ı/g, 'İ')
+    .replace(/i/g, 'İ')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
+
+// Transkriptteki isim kelimelerinin TAMAMI liste girişindeki isimde geçiyorsa eşleşir.
+// Böylece listede önde fazladan kelime olsa da eşleşme çalışır.
+function nameWordsMatch(transcriptName, listEntryName) {
+  const transcriptWords = String(transcriptName || '')
+    .replace(/ı/g, 'İ').replace(/i/g, 'İ')
+    .toUpperCase().trim().split(/\s+/).filter(Boolean);
+  if (transcriptWords.length === 0) return false;
+  const listWordSet = new Set(
+    String(listEntryName || '')
+      .replace(/ı/g, 'İ').replace(/i/g, 'İ')
+      .toUpperCase().trim().split(/\s+/).filter(Boolean)
+  );
+  return transcriptWords.every(w => listWordSet.has(w));
+}
+
+// "Son Not Döküm Belgesi" türü PDF'ten öğrenci numaralarını ve ders bilgisini çıkarır.
+function parseStudentListFromPages(pages) {
+  const studentEntries = [];
+  const seenNos = new Set();
+  let courseCode = null;
+  let courseName = null;
+
+  // Öğrenci no + isim çıkarıcı regex:
+  // Örn: "22294298 AKMAN HATİCE SILA XX" veya "22294298 AKMAN HATİCE SILA"
+  const entryRegex = /\b(\d{8})\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s]{4,60}?)\s+(?:XX|[A-DF][+\-]?\d?|P|Y)\b/g;
+
+  for (const page of pages) {
+    const text = normalizeText(page);
+
+    // Ders bilgisini ilk sayfadan çek
+    if (!courseCode) {
+      const codeMatch = text.match(/Dersin Kodu\s*[:\-]\s*(\S+)/i);
+      if (codeMatch) courseCode = codeMatch[1].trim();
+    }
+    if (!courseName) {
+      const nameMatch = text.match(/Dersin Ad[ıi]\s*[:\-]\s*(.+)/i);
+      if (nameMatch) courseName = nameMatch[1].trim();
+    }
+
+    entryRegex.lastIndex = 0;
+    let m;
+    while ((m = entryRegex.exec(text)) !== null) {
+      const studentNo = m[1];
+      const name     = m[2].trim();
+      if (seenNos.has(studentNo)) continue;
+      seenNos.add(studentNo);
+      studentEntries.push({
+        studentNo,
+        name,
+        normalizedName: normalizeNameForMatch(name)
+      });
+    }
+  }
+
+  return {
+    studentEntries,
+    courseCode: courseCode || null,
+    courseName: courseName || null,
+    totalFound: studentEntries.length
+  };
+}
+
+ipcMain.handle('pick-student-list-pdf', async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Öğrenci Listesi PDF seç (Son Not Döküm Belgesi)',
+      properties: ['openFile'],
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const filePath = result.filePaths[0];
+    const buffer = fs.readFileSync(filePath);
+    const { pages } = await extractPagesFromPdfTextLayer(buffer);
+    const listData = parseStudentListFromPages(pages);
+
+    return {
+      canceled: false,
+      filePath,
+      studentEntries: listData.studentEntries,
+      courseCode: listData.courseCode,
+      courseName: listData.courseName,
+      totalFound: listData.totalFound
+    };
+  } catch (error) {
+    console.error('Öğrenci listesi okuma hatası:', error);
+    throw error;
+  }
+});
+
+// Sayfadaki son takip edilen ders kodu konumuna göre dinamik metin penceresi döndürür.
+function getRelevantTextWindow(pageText, trailingBuffer = 800, maxChars = 25000) {
+  const normalized = normalizeText(pageText).toUpperCase();
+
+  let lastEnd = -1;
+  for (const aliases of Object.values(COURSE_ALIASES)) {
+    for (const alias of aliases) {
+      const aliasText = normalizeText(alias).toUpperCase();
+      let from = 0;
+      while (from < normalized.length) {
+        const idx = normalized.indexOf(aliasText, from);
+        if (idx === -1) break;
+        const end = idx + aliasText.length;
+        if (end > lastEnd) lastEnd = end;
+        from = end;
+      }
+    }
+  }
+
+  const cutoff = lastEnd === -1
+    ? pageText.length          // ders kodu yoksa tüm sayfa
+    : lastEnd + trailingBuffer;
+
+  return pageText.substring(0, Math.min(cutoff, maxChars));
+}
+
 async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
   const regexSummary = TRACKED_COURSES
     .map(c => `${c}: ${regexCourses[c] || 'bulunamadı'}`)
@@ -468,7 +604,7 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
     `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
     `- Ders yoksa null döndür\n` +
     `- SADECE JSON döndür\n\n` +
-    `Transkript:\n${pageText.substring(0, 5000)}`;
+    `Transkript:\n${getRelevantTextWindow(pageText)}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -511,6 +647,9 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
     throw new Error(`Gemini boş yanıt (${data.candidates?.[0]?.finishReason || '?'})`);
   }
 
+  const promptTokens = data.usageMetadata?.promptTokenCount     || 0;
+  const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
+
   const parsed = JSON.parse(rawText);
   const courses = {};
   for (const course of TRACKED_COURSES) courses[course] = null;
@@ -518,7 +657,7 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses) {
     const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
     if (canonical) courses[canonical] = value ? cleanGradeToken(String(value)) : null;
   }
-  return courses;
+  return { courses, promptTokens, outputTokens };
 }
 
 function buildParseSummary(students) {
@@ -733,18 +872,37 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
 
     const { pages, totalPages } = await extractPagesFromPdfTextLayer(buffer);
 
+    const filterEntries = Array.isArray(options.filterStudentEntries) && options.filterStudentEntries.length > 0
+      ? options.filterStudentEntries
+      : null;
+
     const relevantPages = pages.filter(page => {
       const normalized = normalizeText(page);
-      return (
-        normalized.includes('Öğrenci No') &&
-        isLisansPage(normalized) &&
-        isRelevantPage(normalized)
-      );
+      if (!normalized.includes('Öğrenci No')) return false;
+      if (!isLisansPage(normalized)) return false;
+      if (!isRelevantPage(normalized)) return false;
+      if (filterEntries) {
+        const name = findStudentName(normalized);
+        return filterEntries.some(e => nameWordsMatch(name, e.name));
+      }
+      return true;
     });
+
+    // Liste verilmişse: transkripti bulunamayan öğrencileri hesapla
+    const missingStudents = filterEntries
+      ? filterEntries
+          .filter(e =>
+            !relevantPages.some(page => nameWordsMatch(findStudentName(normalizeText(page)), e.name))
+          )
+          .map(e => ({ studentNo: e.studentNo, studentName: e.name }))
+      : [];
 
     const apiKey = (typeof options.apiKey === 'string' ? options.apiKey.trim() : '') || ENV_GEMINI_API_KEY;
 
     const parseResults = [];
+    let totalPromptTokens = 0;
+    let totalOutputTokens = 0;
+
     if (apiKey) {
       // Önce tüm öğrenciler için regex parser çalıştır
       const regexResults = relevantPages.map(parseStudentPage);
@@ -758,9 +916,11 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
         const chunkResults = await Promise.all(
           chunk.map(async (regexResult, idx) => {
             try {
-              const courses = await callGeminiForStudentWithContext(
+              const { courses, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
                 chunkPages[idx], apiKey, regexResult.courses
               );
+              totalPromptTokens += promptTokens;
+              totalOutputTokens += outputTokens;
               return {
                 ...regexResult,
                 courses,
@@ -782,7 +942,11 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       .map(evaluateStudent)
       .filter(student => student.studentNo !== 'Bilinmiyor');
 
-    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}${apiKey ? ' | Gemini kullanıldı' : ''}`);
+    const estimatedCostUSD =
+      (totalPromptTokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_1M +
+      (totalOutputTokens / 1_000_000) * GEMINI_OUTPUT_PRICE_PER_1M;
+
+    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${students.length}${apiKey ? ` | Gemini kullanıldı | ${totalPromptTokens}p + ${totalOutputTokens}o token | ~$${estimatedCostUSD.toFixed(4)}` : ''}`);
 
     const parseSummary = buildParseSummary(students);
 
@@ -793,6 +957,8 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       totalStudents: students.length,
       parseSummary,
       geminiUsed: Boolean(apiKey),
+      tokenStats: apiKey ? { totalPromptTokens, totalOutputTokens, estimatedCostUSD } : null,
+      missingStudents,
       students
     };
   } catch (error) {
