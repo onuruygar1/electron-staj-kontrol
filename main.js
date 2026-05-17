@@ -208,6 +208,78 @@ function findStudentName(pageText) {
   return 'Bilinmiyor';
 }
 
+function findGno(pageText) {
+  const text = normalizeText(pageText);
+  // AGNO satırlarının pozisyonlarını atla
+  const agnoRe = /AGNO\s*[:\=]?\s*\d[\.,]\d{2}/gi;
+  const agnoRanges = [];
+  let am;
+  while ((am = agnoRe.exec(text)) !== null) agnoRanges.push([am.index, am.index + am[0].length]);
+  const inAgno = (pos) => agnoRanges.some(([s, e]) => pos >= s && pos < e);
+
+  const patterns = [
+    /Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+    /(?<![A-Za-z])GNO\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+    /GPA\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m && !inAgno(m.index)) {
+      const val = m[1].replace(',', '.');
+      const f = parseFloat(val);
+      if (f >= 0 && f <= 4.0) return val;
+    }
+  }
+  return null;
+}
+
+function findAgno(pageText) {
+  const text = normalizeText(pageText);
+  const patterns = [
+    /Ağırlıklı\s+Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+    /AGNO\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+    /Cumulative\s+GPA\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+    /CGPA\s*[:\=]?\s*(\d[\.,]\d{2})/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) {
+      const val = m[1].replace(',', '.');
+      const f = parseFloat(val);
+      if (f >= 0 && f <= 4.0) return val;
+    }
+  }
+  return null;
+}
+
+function findSinif(pageText) {
+  const text = normalizeText(pageText);
+  const patterns = [
+    /(\d+)\.\s*Sınıf/i,
+    /(\d+)\.\s*Yıl/i,
+    /Class\s*[:\=]?\s*(\d+)/i,
+    /Year\s*[:\=]?\s*(\d+)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function findDonem(pageText) {
+  const text = normalizeText(pageText);
+  const patterns = [
+    /(\d{4}[-\/]\d{4})\s*(Güz|Bahar|Fall|Spring)/i,
+    /(\d+)\.\s*(Yarıyıl|Dönem|Semester)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return `${m[1]} ${m[2]}`;
+  }
+  return null;
+}
+
 function isLisansPage(pageText) {
   const text = normalizeText(pageText).toUpperCase();
 
@@ -657,7 +729,7 @@ let _analyzeProgress = null;
 ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
 
 ipcMain.handle('save-export-file', async (_event, { format, content, defaultFilename }) => {
-  const extMap  = { csv: 'csv', word: 'doc', pdf: 'pdf' };
+  const extMap  = { csv: 'csv', word: 'docx', pdf: 'pdf' };
   const nameMap = { csv: 'CSV Dosyası', word: 'Word Belgesi', pdf: 'PDF Belgesi' };
   const result = await dialog.showSaveDialog({
     title: 'Dışa Aktar',
@@ -903,6 +975,10 @@ function findGradeForCourseFromLines(lines, aliases) {
 function parseStudentPage(pageText) {
   const studentNo = findStudentNo(pageText);
   const studentName = findStudentName(pageText);
+  const gno = findGno(pageText);
+  const agno = findAgno(pageText);
+  const sinif = findSinif(pageText);
+  const donem = findDonem(pageText);
   const lines = extractLines(pageText);
 
   const parsedFromLines = parseCoursesFromLinesWithDiagnostics(lines);
@@ -928,6 +1004,10 @@ function parseStudentPage(pageText) {
   return {
     studentNo,
     studentName,
+    gno,
+    agno,
+    sinif,
+    donem,
     courses,
     parseDiagnostics: {
       averageConfidence: Number(avgConfidence.toFixed(3)),
@@ -981,6 +1061,10 @@ function evaluateStudent(student) {
   return {
     studentNo: student.studentNo,
     studentName: student.studentName,
+    gno: student.gno || null,
+    agno: student.agno || null,
+    sinif: student.sinif || null,
+    donem: student.donem || null,
     courses: student.courses,
     staj1Details,
     staj1Eligible,

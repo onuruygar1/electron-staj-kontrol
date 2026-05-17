@@ -61,6 +61,23 @@ let missingStudents  = [];
 let activeFilter     = 'all'; // 'all'|'staj1'|'staj2'|'bil493'|'bil494'|'unlisted'
 let studentListData  = null;
 
+/* ── Dark mode ── */
+const themeToggleBtn = document.getElementById('themeToggle');
+(function initTheme() {
+  const saved = localStorage.getItem('theme') || 'light';
+  document.body.setAttribute('data-theme', saved);
+  if (themeToggleBtn) themeToggleBtn.textContent = saved === 'dark' ? '☀️' : '🌙';
+})();
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener('click', () => {
+    const isDark = document.body.getAttribute('data-theme') === 'dark';
+    const next = isDark ? 'light' : 'dark';
+    document.body.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    themeToggleBtn.textContent = next === 'dark' ? '☀️' : '🌙';
+  });
+}
+
 /* ── Öğrenci listesi buton ── */
 listBtn.addEventListener('click', async () => {
   listBtn.disabled = true;
@@ -160,11 +177,19 @@ function renderStudent(student) {
           ${unlistedBadge}
           ${renderParseWarning(student)}
         </div>
-        <div class="pills">
-          <span class="pill ${student.staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
-          <span class="pill ${student.staj2Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj2Eligible ? 'Staj II Alabilir' : 'Staj II Alamaz'}</span>
-          <span class="pill ${student.bil493Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil493Eligible ? 'BİL493 Alabilir' : 'BİL493 Alamaz'}</span>
-          <span class="pill ${student.bil494Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil494Eligible ? 'BİL494 Alabilir' : 'BİL494 Alamaz'}</span>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <div class="pills">
+            <span class="pill ${student.staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
+            <span class="pill ${student.staj2Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj2Eligible ? 'Staj II Alabilir' : 'Staj II Alamaz'}</span>
+            <span class="pill ${student.bil493Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil493Eligible ? 'BİL493 Alabilir' : 'BİL493 Alamaz'}</span>
+            <span class="pill ${student.bil494Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil494Eligible ? 'BİL494 Alabilir' : 'BİL494 Alamaz'}</span>
+          </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
+            ${student.gno   ? `<span class="gno-badge">GNO ${student.gno}</span>` : ''}
+            ${student.agno  ? `<span class="agno-badge">AGNO ${student.agno}</span>` : ''}
+            ${student.sinif ? `<span class="sinif-badge">${student.sinif}. Sınıf</span>` : ''}
+            ${student.donem ? `<span class="donem-info">${student.donem}</span>` : ''}
+          </div>
         </div>
       </div>
       <table>
@@ -200,7 +225,7 @@ function renderMissingStudent(s) {
 
 /* ── Filter + search ── */
 function applyFilters() {
-  const query = searchEl.value.trim().toLowerCase();
+  const raw = searchEl.value.trim();
 
   let filtered = allStudents;
   if (activeFilter === 'staj1')   filtered = filtered.filter(s => s.staj1Eligible);
@@ -208,11 +233,45 @@ function applyFilters() {
   if (activeFilter === 'bil493')  filtered = filtered.filter(s => s.bil493Eligible);
   if (activeFilter === 'bil494')  filtered = filtered.filter(s => s.bil494Eligible);
   if (activeFilter === 'unlisted') filtered = filtered.filter(s => !s.inList);
-  if (query) {
-    filtered = filtered.filter(s =>
-      s.studentName.toLowerCase().includes(query) ||
-      s.studentNo.includes(query)
-    );
+
+  if (raw) {
+    const query = raw.toLowerCase();
+
+    // no:12345678 — öğrenci no araması
+    const noMatch = raw.match(/^no:(\S+)/i);
+    if (noMatch) {
+      const num = noMatch[1];
+      filtered = filtered.filter(s => s.studentNo.includes(num));
+    }
+    // gno>X, gno>=X, gno<X, gno<=X
+    else if (/^gno\s*(>=|>|<=|<)\s*[\d.,]+/i.test(raw)) {
+      const m = raw.match(/^gno\s*(>=|>|<=|<)\s*([\d.,]+)/i);
+      if (m) {
+        const op  = m[1];
+        const val = parseFloat(m[2].replace(',', '.'));
+        filtered = filtered.filter(s => {
+          const g = parseFloat(s.gno);
+          if (isNaN(g)) return false;
+          if (op === '>')  return g >  val;
+          if (op === '>=') return g >= val;
+          if (op === '<')  return g <  val;
+          if (op === '<=') return g <= val;
+          return false;
+        });
+      }
+    }
+    // ders kodu araması (ör. BİL240) — öğrencinin o derste notu varsa göster
+    else if (/^[A-ZÇĞİÖŞÜa-zçğışöü]{2,4}\d{3}$/i.test(raw.replace(/\s+/g, ''))) {
+      const code = raw.toUpperCase().replace(/\s+/g, '').replace(/^BIL/, 'BİL').replace(/I/g, 'İ');
+      filtered = filtered.filter(s => s.courses && s.courses[code] != null);
+    }
+    // Genel metin araması — isim veya öğrenci no
+    else {
+      filtered = filtered.filter(s =>
+        s.studentName.toLowerCase().includes(query) ||
+        s.studentNo.includes(query)
+      );
+    }
   }
 
   document.getElementById('filteredCount').textContent =
@@ -462,7 +521,7 @@ async function doExport(format) {
   const date = getExportDate();
   const engine = activeMode === 'gemini' ? 'gemini' : 'pdfplumber';
   const base = `staj-rapor-${date}-${engine}`;
-  const map = { csv: `${base}.csv`, word: `${base}.doc`, pdf: `${base}.pdf` };
+  const map = { csv: `${base}.csv`, word: `${base}.docx`, pdf: `${base}.pdf` };
   const content = format === 'csv' ? buildExportCSV() : buildExportHTML();
   const result = await window.electronAPI.saveExportFile({ format, content, defaultFilename: map[format] });
   if (result?.error) alert('Dışa aktarma hatası: ' + result.error);

@@ -105,6 +105,81 @@ def find_student_no(text):
     return "Bilinmiyor"
 
 
+def find_gno(text):
+    """Genel Not Ortalaması (GNO) — 0.00-4.00 arası ondalıklı sayı."""
+    patterns = [
+        r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",          # önce AGNO'yu atla
+        r"Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
+        r"(?<![A-Za-z])GNO\s*[:\=]?\s*(\d[\.,]\d{2})",
+        r"GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
+    ]
+    # AGNO satırlarını bul, sonra GNO ara
+    agno_positions = set()
+    for m in re.finditer(r"AGNO\s*[:\=]?\s*\d[\.,]\d{2}", text, re.IGNORECASE):
+        agno_positions.update(range(m.start(), m.end()))
+
+    for pat in patterns[1:]:  # AGNO pattern'i atla
+        for m in re.finditer(pat, text, re.IGNORECASE):
+            if m.start() not in agno_positions:
+                val = m.group(1).replace(",", ".")
+                try:
+                    f = float(val)
+                    if 0.0 <= f <= 4.0:
+                        return val
+                except ValueError:
+                    pass
+    return None
+
+
+def find_agno(text):
+    """Ağırlıklı Genel Not Ortalaması (AGNO)."""
+    patterns = [
+        r"Ağırlıklı\s+Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
+        r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",
+        r"Cumulative\s+GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
+        r"CGPA\s*[:\=]?\s*(\d[\.,]\d{2})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            val = m.group(1).replace(",", ".")
+            try:
+                f = float(val)
+                if 0.0 <= f <= 4.0:
+                    return val
+            except ValueError:
+                pass
+    return None
+
+
+def find_sinif(text):
+    """Kaçıncı sınıfta olduğunu döndürür (ör. '3')."""
+    patterns = [
+        r"(\d+)\.\s*Sınıf",
+        r"(\d+)\.\s*Yıl",
+        r"Class\s*[:\=]?\s*(\d+)",
+        r"Year\s*[:\=]?\s*(\d+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
+def find_donem(text):
+    """Mevcut dönemi döndürür (ör. '2023-2024 Güz' veya '3. Yarıyıl')."""
+    patterns = [
+        r"(\d{4}[-/]\d{4})\s*(Güz|Bahar|Fall|Spring)",
+        r"(\d+)\.\s*(Yarıyıl|Dönem|Semester)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            return " ".join(m.groups())
+    return None
+
+
 def find_student_name(text):
     label_re = re.compile(
         r"(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:", re.IGNORECASE
@@ -265,6 +340,10 @@ def parse_page(plumber_page):
 
     student_no = find_student_no(text)
     student_name = find_student_name(text)
+    gno = find_gno(text)
+    agno = find_agno(text)
+    sinif = find_sinif(text)
+    donem = find_donem(text)
 
     # Önce tablo bazlı
     tables = plumber_page.extract_tables()
@@ -279,6 +358,10 @@ def parse_page(plumber_page):
     return {
         "studentNo": student_no,
         "studentName": student_name,
+        "gno": gno,
+        "agno": agno,
+        "sinif": sinif,
+        "donem": donem,
         "courses": {c: courses.get(c) for c in TRACKED_COURSES},
     }
 
