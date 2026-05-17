@@ -440,6 +440,7 @@ function buildExportCSV() {
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const headers = [
     'Öğrenci No', 'Ad Soyad', 'Listede',
+    'GNO', 'AGNO', 'Sınıf', 'Dönem',
     'Staj I', 'Staj II', 'BİL493 Alabilir', 'BİL494 Alabilir',
     ...courseKeys
   ];
@@ -448,6 +449,7 @@ function buildExportCSV() {
     ...allStudents.map(s => [
       s.studentNo, s.studentName,
       s.inList !== false ? 'Evet' : 'Hayır',
+      s.gno || '', s.agno || '', s.sinif || '', s.donem || '',
       s.staj1Eligible ? 'Alabilir' : 'Alamaz',
       s.staj2Eligible ? 'Alabilir' : 'Alamaz',
       s.bil493Eligible ? 'Alabilir' : 'Alamaz',
@@ -456,6 +458,7 @@ function buildExportCSV() {
     ].map(esc).join(',')),
     ...missingStudents.map(s => [
       s.studentNo, s.studentName, 'Evet',
+      '', '', '', '',
       'Transkript Yok', 'Transkript Yok', 'Transkript Yok', 'Transkript Yok',
       ...courseKeys.map(() => '')
     ].map(esc).join(','))
@@ -474,6 +477,10 @@ function buildExportHTML() {
       <td>${s.studentNo}</td>
       <td>${s.studentName || '-'}</td>
       <td>${s.inList !== false ? 'Evet' : '<span style="color:#92400e">Hayır</span>'}</td>
+      <td style="text-align:center">${s.gno || '-'}</td>
+      <td style="text-align:center">${s.agno || '-'}</td>
+      <td style="text-align:center">${s.sinif ? s.sinif + '. Sınıf' : '-'}</td>
+      <td style="text-align:center">${s.donem || '-'}</td>
       <td style="text-align:center">${elig(s.staj1Eligible)}</td>
       <td style="text-align:center">${elig(s.staj2Eligible)}</td>
       <td style="text-align:center">${elig(s.bil493Eligible)}</td>
@@ -486,7 +493,7 @@ function buildExportHTML() {
       <td>${s.studentNo}</td>
       <td>${s.studentName || '-'}</td>
       <td>Evet</td>
-      <td colspan="${4 + courseKeys.length}" style="color:#92400e">⚠ Transkript bulunamadı</td>
+      <td colspan="${8 + courseKeys.length}" style="color:#92400e">⚠ Transkript bulunamadı</td>
     </tr>`).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -509,6 +516,7 @@ function buildExportHTML() {
 <table>
   <thead><tr>
     <th>Öğrenci No</th><th>Ad Soyad</th><th>Listede</th>
+    <th>GNO</th><th>AGNO</th><th>Sınıf</th><th>Dönem</th>
     <th>Staj I</th><th>Staj II</th><th>BİL493</th><th>BİL494</th>
     ${courseKeys.map(c => `<th>${c}</th>`).join('')}
   </tr></thead>

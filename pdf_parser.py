@@ -87,6 +87,34 @@ def map_canonical(code):
     return None
 
 
+# Kalma notları
+FAILING_GRADES = {"F1", "F2", "XX", "F"}
+
+
+def is_passing(grade):
+    return bool(grade) and clean_grade(grade) not in FAILING_GRADES
+
+
+def best_grade(existing, new):
+    """
+    İki not arasından en doğru olanı seçer:
+      - Geçer not her zaman kalan/F notuna üstün gelir.
+      - İkisi de aynı türdeyse (ikisi de geçer veya ikisi de kalan) en son görülen (new) kazanr.
+    Bu kural belgenin sırasından bağımsız dönüşümü garanti eder.
+    """
+    if existing is None:
+        return new
+    if new is None:
+        return existing
+    p_ex = is_passing(existing)
+    p_new = is_passing(new)
+    if p_new and not p_ex:
+        return new   # yeni geçer, eski kaldı → yeni
+    if p_ex and not p_new:
+        return existing  # eski geçer, yeni kaldı → mevcut koru
+    return new  # ikisi de aynı türde → en son görülen
+
+
 def find_student_no(text):
     patterns = [
         r"Öğrenci\s+No[:\-\s]+(\d{7,10})",
@@ -235,10 +263,13 @@ def is_lisans_page(text):
 def extract_from_tables(tables):
     """
     pdfplumber tablo hücrelerinden ders kodu → not eşleşmesi çıkarır.
-    Aynı ders birden geçerse en son kayıt kazanır.
+    • Kurs kodu olmayan satırlar bir önceki dersin tekrar kaydı sayılır.
+    • best_grade politikası: geçer not kalan nota her zaman üstündür;
+      ikisi de aynı türdeyse en son görülen seçilir.
     """
     results = {}
     for table in tables or []:
+        current_canonical = None
         for row in table:
             cells = [str(c or "").strip() for c in row]
             canonical = None
@@ -249,13 +280,20 @@ def extract_from_tables(tables):
                     canonical = c
                     course_idx = i
                     break
-            if canonical is None:
+
+            if canonical is not None:
+                current_canonical = canonical
+                search_cells = cells[course_idx + 1:]
+            elif current_canonical is not None:
+                # Kurs kodu yok — muhtemelen tekrar satırı
+                search_cells = cells
+            else:
                 continue
-            # Ders kodundan sonraki hücrelerde not ara
-            for cell in cells[course_idx + 1:]:
+
+            for cell in search_cells:
                 g = clean_grade(cell)
                 if VALID_GRADE_RE.match(g):
-                    results[canonical] = g  # son kayıt kazanır
+                    results[current_canonical] = best_grade(results.get(current_canonical), g)
                     break
     return results
 
@@ -287,7 +325,7 @@ def extract_from_text(text):
             after = lu[pos + alen:]
             gm = GRADE_SCAN_RE.search(after)
             if gm:
-                results[canonical] = clean_grade(gm.group(0))
+                results[canonical] = best_grade(results.get(canonical), clean_grade(gm.group(0)))
                 continue
             # Sonraki satırda ara
             if i + 1 < len(lines):
@@ -299,8 +337,8 @@ def extract_from_text(text):
                 )
                 if not has_course:
                     gm2 = GRADE_SCAN_RE.search(nxt)
-                    if gm2 and canonical not in results:
-                        results[canonical] = clean_grade(gm2.group(0))
+                    if gm2:
+                        results[canonical] = best_grade(results.get(canonical), clean_grade(gm2.group(0)))
     return results
 
 
@@ -349,11 +387,10 @@ def parse_page(plumber_page):
     tables = plumber_page.extract_tables()
     courses = extract_from_tables(tables)
 
-    # Tabloda bulunamayanlar için metin bazlı
+    # Metin bazlı çıkarım; best_grade ile birleştir.
     text_courses = extract_from_text(text)
     for c, g in text_courses.items():
-        if c not in courses:
-            courses[c] = g
+        courses[c] = best_grade(courses.get(c), g)
 
     return {
         "studentNo": student_no,
