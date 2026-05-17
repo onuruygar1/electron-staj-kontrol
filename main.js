@@ -731,20 +731,24 @@ function getRelevantTextWindow(pageText, trailingBuffer = 800, maxChars = 25000)
   return pageText.substring(0, Math.min(cutoff, maxChars));
 }
 
-async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses, _retryCount = 0) {
-  const regexSummary = GEMINI_COURSES
-    .map(c => `${c}: ${regexCourses[c] || 'bulunamadı'}`)
-    .join(', ');
+async function callGeminiForStudentWithContext(pageText, apiKey, _retryCount = 0) {
+  const courseList = TRACKED_COURSES.join(', ');
+
+  const aliasLines = Object.entries(COURSE_ALIASES)
+    .filter(([canonical, aliases]) => aliases.length > 1)
+    .map(([canonical, aliases]) => `  ${canonical} = ${aliases.join(' = ')}`)
+    .join('\n');
 
   const prompt =
-    `Türk üniversitesi transkriptinden ders notlarını doğrula ve düzelt.\n\n` +
-    `Regex parser şu sonuçları buldu: ${regexSummary}\n\n` +
-    `Transkripti okuyarak:\n` +
-    `- Yanlış eşleştirilmiş notları düzelt (not başka bir derse ait olabilir)\n` +
-    `- "bulunamadı" olanları transkriptte varsa doldur\n` +
+    `Türk üniversitesi transkriptinden ders notlarını oku ve JSON olarak döndür.\n\n` +
+    `Takip edilecek dersler: ${courseList}\n\n` +
+    `Ders kodu eşdeğerlikleri (transkriptte farklı kodla geçebilir):\n${aliasLines}\n\n` +
+    `Kurallar:\n` +
+    `- Her ders için transkriptten doğrudan notu oku; transkriptte eşdeğer kod varsa onu kullan\n` +
     `- Ders birden fazla alınmışsa EN SON alınan notu kullan\n` +
     `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
-    `- Ders yoksa null döndür\n` +
+    `- Ders transkriptte yoksa null döndür\n` +
+    `- JSON key olarak her zaman sol taraftaki kanonik kodu kullan (örn: BİL343)\n` +
     `- "studentName" alanına transkript başlığındaki öğrencinin adı soyadını büyük harflerle yaz (örn: "HATİCE SILA AKMAN"), bulamazsan null\n` +
     `- SADECE JSON döndür\n\n` +
     `Transkript:\n${getRelevantTextWindow(pageText)}`;
@@ -784,7 +788,7 @@ async function callGeminiForStudentWithContext(pageText, apiKey, regexCourses, _
       _analyzeProgress = { ..._analyzeProgress, rateLimited: true, waitUntil: Date.now() + waitMs };
       await new Promise(r => setTimeout(r, waitMs));
       _analyzeProgress = { ..._analyzeProgress, rateLimited: false };
-      return callGeminiForStudentWithContext(pageText, apiKey, regexCourses, _retryCount + 1);
+      return callGeminiForStudentWithContext(pageText, apiKey, _retryCount + 1);
     }
     throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 200)}`);
   }
@@ -1083,25 +1087,15 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
         const chunkResults = await Promise.all(
           chunk.map(async (regexResult, idx) => {
             let result;
-            // Gemini sadece sayfada GEMINI_COURSES'dan en az biri varsa çağrılır
-            const pageNorm = normalizeText(chunkPages[idx]).toUpperCase();
-            const pageHasGeminiCourse = GEMINI_COURSES.some(c =>
-              pageNorm.includes(c.toUpperCase().replace(/İ/g, 'I').replace(/Ş/g,'S').replace(/Ğ/g,'G'))
-            );
-            if (!pageHasGeminiCourse) {
-              doneCount++;
-              _analyzeProgress = { phase: 'gemini', done: doneCount, total };
-              return regexResult;
-            }
             try {
               const { courses, studentName, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
-                chunkPages[idx], apiKey, regexResult.courses
+                chunkPages[idx], apiKey
               );
               totalPromptTokens += promptTokens;
               totalOutputTokens += outputTokens;
               // Gemini sadece GEMINI_COURSES'u doğrular; MAT/FİZ/BİL101-124 için regex değerini koru
               const mergedCourses = { ...regexResult.courses };
-              for (const c of GEMINI_COURSES) mergedCourses[c] = courses[c];
+              for (const c of TRACKED_COURSES) mergedCourses[c] = courses[c];
               result = {
                 ...regexResult,
                 studentName: studentName || regexResult.studentName,
