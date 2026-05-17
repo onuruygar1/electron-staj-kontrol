@@ -1,6 +1,25 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# PyInstaller
+*.spec
+__pycache__/
+*.pyc
+*.pyo
+
+# Compiled Python parser (rebuilt via build_parser.bat)
+pdf_parser.exe
+
+# Electron builder artifacts
+*.blockmap
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Environment
 .env
-.dist
-dist
-dist.zip

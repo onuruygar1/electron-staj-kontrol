@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
-    "build:dir": "electron-builder --win --x64 --dir"
+    "build:dir": "electron-builder --win --x64 --dir",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux --x64"
   },
   "build": {
     "appId": "com.stajkontrol.app",
@@ -20,6 +22,9 @@
       "*.traineddata",
       "node_modules/**"
     ],
+    "extraResources": [
+      { "from": "pdf_parser.exe", "to": "pdf_parser.exe" }
+    ],
     "win": {
       "target": "nsis",
       "icon": "logo.jpeg"
@@ -29,6 +34,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "logo.jpeg"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "logo.jpeg"
     }
   },
   "author": "IYTE",

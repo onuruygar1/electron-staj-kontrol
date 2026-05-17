@@ -1,7 +1,15 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const pdfParse = require('pdf-parse');
+
+function getPdfParserExePath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'pdf_parser.exe');
+  }
+  return path.join(__dirname, 'pdf_parser.exe');
+}
 
 // .env dosyasından API key yükle (dotenv gerektirmez)
 function loadEnvApiKey() {
@@ -171,25 +179,29 @@ function findStudentName(pageText) {
   // Olası etiket varyantları: "Adı Soyadı", "Ad Soyad", "Ad / Soyad", "Name"
   const labelRe = /(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:/i;
 
-  // Etiket + değer + sonraki anahtar kelime (K:, AKTS, Bölüm, GNO, Program, Fakülte)
-  const stopRe = /\s+(?:K:\s*AKTS|AKTS|K:|Bölüm|GNO|Program|Fakülte|Faculty|Dept)/i;
+  // Etiketten sonra alanı bitiren kelimeler — önce \s+ zorunluluğu yok
+  const stopRe = /(?:K:\s*AKTS|AKTS|K:|Bölüm|GNO|Program|Fakülte|Faculty|Dept|T\.C\.|Doğum|Mezun|Şube|Tarih)/i;
 
   const labelMatch = normalized.match(labelRe);
   if (labelMatch) {
     const afterLabel = normalized.slice(labelMatch.index + labelMatch[0].length);
-    const stopMatch = afterLabel.match(stopRe);
-    const raw = stopMatch ? afterLabel.slice(0, stopMatch.index) : afterLabel.split('\n')[0];
-    const candidate = raw.replace(/[:\-]/, '').trim();
-    if (candidate.length >= 3) return candidate;
+    // Baştaki tüm boşluk / iki nokta / tire karakterlerini temizle
+    const afterClean = afterLabel.replace(/^[\s:\-]+/, '');
+    const stopMatch = afterClean.match(stopRe);
+    const raw = stopMatch ? afterClean.slice(0, stopMatch.index) : afterClean.split('\n')[0];
+    const candidate = raw.split('\n')[0].trim();
+    // Rakam içeriyorsa isim değildir
+    if (candidate.length >= 3 && !/\d/.test(candidate)) return candidate;
   }
 
   // Son çare: sayfanın ilk satırlarında tamamen büyük harfli 2+ kelime grubu
-  for (const line of normalized.split('\n').slice(0, 10)) {
+  for (const line of normalized.split('\n').slice(0, 15)) {
     const trimmed = line.trim();
-    // En az 2 büyük harfli Türkçe kelime, her biri ≥2 harf
-    if (/^([A-ZÇĞİÖŞÜ]{2,}\s+){1,}[A-ZÇĞİÖŞÜ]{2,}$/.test(trimmed)) {
-      // Ders kodu gibi görünmüyorsa (3 harf + rakam) isim olabilir
-      if (!/\b[A-Z]{2,4}\d{3}\b/.test(trimmed)) return trimmed;
+    if (/^[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s]{4,}$/.test(trimmed)) {
+      const words = trimmed.split(/\s+/).filter(Boolean);
+      if (words.length >= 2 && words.every(w => w.length >= 2)) {
+        if (!/\b[A-Z]{2,4}\d{3}\b/.test(trimmed)) return trimmed;
+      }
     }
   }
 
@@ -1033,6 +1045,34 @@ async function extractPagesFromPdfTextLayer(buffer) {
   };
 }
 
+// ── pdfplumber subprocess yardımcısı ────────────────────────────────────────────────────────────────
+function runPdfplumber(filePath) {
+  return new Promise((resolve, reject) => {
+    const exePath = getPdfParserExePath();
+    if (!fs.existsSync(exePath)) {
+      return reject(new Error(
+        'pdf_parser.exe bulunamadı. Lütfen önce build_parser.bat dosyasını çalıştırın.'
+      ));
+    }
+    execFile(
+      exePath,
+      [filePath],
+      { maxBuffer: 50 * 1024 * 1024, encoding: 'buffer', timeout: 120000 },
+      (err, stdout, _stderr) => {
+        if (err) return reject(new Error(`pdfplumber hatası: ${err.message}`));
+        let parsed;
+        try {
+          parsed = JSON.parse(stdout.toString('utf8'));
+        } catch (e) {
+          return reject(new Error(`JSON parse hatası: ${e.message}`));
+        }
+        if (parsed.error) return reject(new Error(parsed.error));
+        resolve(parsed);
+      }
+    );
+  });
+}
+
 ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
   try {
     const result = await dialog.showOpenDialog({
@@ -1046,9 +1086,94 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
     }
 
     const filePath = result.filePaths[0];
-    const buffer = fs.readFileSync(filePath);
 
-    const { pages, totalPages } = await extractPagesFromPdfTextLayer(buffer);
+    // ── pdfplumber modu ────────────────────────────────────────────────────────────────
+    if (options.mode === 'pdfplumber') {
+      _analyzeProgress = { phase: 'pdfplumber', filePath };
+      const plumberData = await runPdfplumber(filePath);
+
+      const filterEntries =
+        Array.isArray(options.filterStudentEntries) && options.filterStudentEntries.length > 0
+          ? options.filterStudentEntries
+          : null;
+
+      const parseResults = plumberData.students.map(s => ({
+        ...s,
+        parseDiagnostics: {
+          pdfplumberUsed: true,
+          averageConfidence: 0.95,
+          lowConfidenceCourses: [],
+          courses: {}
+        }
+      }));
+
+      const students = parseResults
+        .map(evaluateStudent)
+        .filter(s => s.studentNo !== 'Bilinmiyor');
+
+      const studentMatches = (s, e) =>
+        (s.studentNo && e.studentNo && s.studentNo === e.studentNo) ||
+        nameWordsMatch(s.studentName, e.name);
+
+      const missingStudents = filterEntries
+        ? filterEntries
+            .filter(e => !students.some(s => studentMatches(s, e)))
+            .map(e => ({ studentNo: e.studentNo, studentName: e.name }))
+        : [];
+
+      const studentsTagged = students.map(s => ({
+        ...s,
+        inList: !filterEntries || filterEntries.some(e => studentMatches(s, e))
+      }));
+
+      const parseSummary = buildParseSummary(studentsTagged);
+      _analyzeProgress = null;
+
+      console.log(`pdfplumber | Sayfa: ${plumberData.totalPages} | Öğrenci: ${studentsTagged.length}`);
+
+      return {
+        canceled: false,
+        filePath,
+        totalPages: plumberData.totalPages || 0,
+        totalStudents: studentsTagged.length,
+        parseSummary,
+        geminiUsed: false,
+        pdfplumberUsed: true,
+        tokenStats: null,
+        missingStudents,
+        students: studentsTagged
+      };
+    }
+
+    // ── Mevcut regex / Gemini modu ──────────────────────────────────────────────────────────────
+    let pages, totalPages;
+    const exePath = getPdfParserExePath();
+    if (fs.existsSync(exePath)) {
+      // pdfplumber mevcut — daha iyi koordinat bazlı metin kullan
+      const plumberResult = await new Promise((resolve, reject) => {
+        execFile(
+          exePath,
+          ['--text-only', filePath],
+          { maxBuffer: 100 * 1024 * 1024, encoding: 'buffer', timeout: 120000 },
+          (err, stdout) => {
+            if (err) return reject(new Error(`pdfplumber metin hatası: ${err.message}`));
+            try {
+              const parsed = JSON.parse(stdout.toString('utf8'));
+              if (parsed.error) return reject(new Error(parsed.error));
+              resolve(parsed);
+            } catch (e) { reject(new Error(`JSON parse hatası: ${e.message}`)); }
+          }
+        );
+      });
+      pages = (plumberResult.pages || []).map(p => p.text);
+      totalPages = plumberResult.totalPages || pages.length;
+    } else {
+      // Fallback: pdf-parse
+      const buffer = fs.readFileSync(filePath);
+      const extracted = await extractPagesFromPdfTextLayer(buffer);
+      pages = extracted.pages;
+      totalPages = extracted.totalPages;
+    }
 
     const filterEntries = Array.isArray(options.filterStudentEntries) && options.filterStudentEntries.length > 0
       ? options.filterStudentEntries
@@ -1155,6 +1280,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       totalStudents: studentsTagged.length,
       parseSummary,
       geminiUsed: Boolean(apiKey),
+      pdfplumberUsed: false,
       tokenStats: apiKey ? { totalPromptTokens, totalOutputTokens, estimatedCostUSD } : null,
       missingStudents,
       students: studentsTagged

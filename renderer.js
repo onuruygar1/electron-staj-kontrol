@@ -24,6 +24,38 @@ if (saveKeyBtn) {
   });
 }
 
+// ── Analiz modu ──────────────────────────────────────────────────────────────
+let activeMode = localStorage.getItem('analyzeMode') || 'pdfplumber'; // 'pdfplumber' | 'gemini'
+
+const geminiKeySection = document.getElementById('geminiKeySection');
+const modeHint         = document.getElementById('modeHint');
+
+const MODE_HINTS = {
+  pdfplumber: 'Tablolar ve metin analizi ile ayrıştırır — Python gerektirmez.',
+  gemini:     'Gemini 2.5 Flash ile yüksek doğruluklu analiz. API key gerekir.'
+};
+
+function applyMode(mode) {
+  activeMode = mode;
+  localStorage.setItem('analyzeMode', mode);
+
+  document.querySelectorAll('.mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+
+  if (geminiKeySection) {
+    geminiKeySection.style.display = mode === 'gemini' ? 'flex' : 'none';
+  }
+  if (modeHint) modeHint.textContent = MODE_HINTS[mode] || '';
+}
+
+// İlk yükleme
+applyMode(activeMode);
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyMode(btn.dataset.mode));
+});
+
 let allStudents      = [];
 let missingStudents  = [];
 let activeFilter     = 'all'; // 'all'|'staj1'|'staj2'|'bil493'|'bil494'|'unlisted'
@@ -222,6 +254,10 @@ analyzeBtn.addEventListener('click', async () => {
 
   let _pollTimer = null;
   function startPolling() {
+    if (activeMode === 'pdfplumber') {
+      summaryEl.innerHTML = '<div class="msg">⏳ pdfplumber ile ayrıştırılıyor…</div>';
+      return;
+    }
     _pollTimer = setInterval(async () => {
       try {
         const p = await window.electronAPI.getProgress();
@@ -242,7 +278,8 @@ analyzeBtn.addEventListener('click', async () => {
   startPolling();
   try {
     const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
-    const analyzeOptions = { ...(apiKey ? { apiKey } : {}) };
+    const analyzeOptions = { mode: activeMode };
+    if (activeMode === 'gemini' && apiKey) analyzeOptions.apiKey = apiKey;
     if (studentListData) analyzeOptions.filterStudentEntries = studentListData.studentEntries;
     const data = await window.electronAPI.pickPdfAndAnalyze(analyzeOptions);
     stopPolling();
@@ -268,15 +305,17 @@ analyzeBtn.addEventListener('click', async () => {
       ? Math.round(((totalEntries - missingEntries) / totalEntries) * 100)
       : 0;
 
-    const parserInfo = geminiUsed
-      ? (() => {
-          const ts = data.tokenStats;
-          const tokenLine = ts
-            ? ` · ${ts.totalPromptTokens.toLocaleString('tr-TR')} prompt + ${ts.totalOutputTokens.toLocaleString('tr-TR')} output token · ~$${ts.estimatedCostUSD.toFixed(4)}`
-            : '';
-          return `<span class="gemini-badge">Gemini 2.5 Flash</span>${tokenLine}`;
-        })()
-      : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
+    const parserInfo = data.pdfplumberUsed
+      ? '<span class="pdfplumber-badge">pdfplumber (Yerleşik)</span>'
+      : geminiUsed
+        ? (() => {
+            const ts = data.tokenStats;
+            const tokenLine = ts
+              ? ` · ${ts.totalPromptTokens.toLocaleString('tr-TR')} prompt + ${ts.totalOutputTokens.toLocaleString('tr-TR')} output token · ~$${ts.estimatedCostUSD.toFixed(4)}`
+              : '';
+            return `<span class="gemini-badge">Gemini 2.5 Flash</span>${tokenLine}`;
+          })()
+        : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
 
     const listInfo = studentListData && missingStudents.length > 0
       ? `<div class="parse-summary" style="color:#b91c1c">⚠ ${missingStudents.length} öğrencinin transkripti bulunamadı${unlistedCount > 0 ? ` · ${unlistedCount} öğrenci listede yok` : ''}</div>`
@@ -314,7 +353,7 @@ analyzeBtn.addEventListener('click', async () => {
         </div>
       </div>
       <div class="file-path">📄 ${data.filePath}</div>
-      <div class="parse-summary" style="display:none">${parserInfo}</div>
+      <div class="parse-summary">${parserInfo}</div>
       ${listInfo}`;
 
     // Reset toolbar state
@@ -421,7 +460,9 @@ function buildExportHTML() {
 async function doExport(format) {
   if (allStudents.length === 0) return;
   const date = getExportDate();
-  const map = { csv: `staj-rapor-${date}.csv`, word: `staj-rapor-${date}.doc`, pdf: `staj-rapor-${date}.pdf` };
+  const engine = activeMode === 'gemini' ? 'gemini' : 'pdfplumber';
+  const base = `staj-rapor-${date}-${engine}`;
+  const map = { csv: `${base}.csv`, word: `${base}.doc`, pdf: `${base}.pdf` };
   const content = format === 'csv' ? buildExportCSV() : buildExportHTML();
   const result = await window.electronAPI.saveExportFile({ format, content, defaultFilename: map[format] });
   if (result?.error) alert('Dışa aktarma hatası: ' + result.error);
