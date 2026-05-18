@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const pdfParse = require('pdf-parse');
+const { Document, Packer, Table, TableRow, TableCell, Paragraph, TextRun, WidthType, AlignmentType, HeadingLevel, BorderStyle } = require('docx');
 
 function getPdfParserExePath() {
   if (app.isPackaged) {
@@ -55,6 +56,19 @@ app.on('window-all-closed', () => {
 const PASSING_GRADES = new Set([
   'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+'
 ]);
+
+const GRADE_ORDER = {
+  F: 0, F1: 0, F2: 0, XX: 0,
+  D: 1, 'D+': 2,
+  'C-': 3, C: 4, 'C+': 5,
+  'B-': 6, B: 7, 'B+': 8,
+  'A-': 9, A: 10, 'A+': 11,
+  Y: 5, P: 5,
+};
+
+function gradeRank(grade) {
+  return GRADE_ORDER[cleanGradeToken(grade)] ?? -1;
+}
 
 const COURSE_ALIASES = {
   // Temel CS dersleri
@@ -449,10 +463,20 @@ function buildEmptyCourseMap(defaultValueFactory) {
 function pickBestCandidate(candidates) {
   if (!candidates || candidates.length === 0) return null;
 
-  // Ders birden fazla alınmışsa (farklı notlar = conflict) en son satırdaki notu kullan.
+  // Ders birden fazla alınmışsa (farklı notlar = conflict):
+  //   - Her ikisi de geçer → en yüksek notu al
+  //   - Diğer durumlar    → en son satırdaki (güncel durum)
   const uniqueGrades = new Set(candidates.map(c => c.grade));
   if (uniqueGrades.size > 1) {
-    return [...candidates].sort((a, b) => b.lineIndex - a.lineIndex)[0];
+    const byLine = [...candidates].sort((a, b) => b.lineIndex - a.lineIndex);
+    const latest = byLine[0];
+    if (PASSING_GRADES.has(latest.grade)) {
+      const passingCandidates = candidates.filter(c => PASSING_GRADES.has(c.grade));
+      return passingCandidates.reduce((best, c) =>
+        gradeRank(c.grade) > gradeRank(best.grade) ? c : best
+      );
+    }
+    return latest;
   }
 
   // Tek not varsa en yüksek confidence'lı, eşit ise en son satırdaki.
@@ -728,7 +752,7 @@ function parseStudentListFromPages(pages) {
 let _analyzeProgress = null;
 ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
 
-ipcMain.handle('save-export-file', async (_event, { format, content, defaultFilename }) => {
+ipcMain.handle('save-export-file', async (_event, { format, content, defaultFilename, wordData }) => {
   const extMap  = { csv: 'csv', word: 'docx', pdf: 'pdf' };
   const nameMap = { csv: 'CSV Dosyası', word: 'Word Belgesi', pdf: 'PDF Belgesi' };
   const result = await dialog.showSaveDialog({
@@ -749,6 +773,124 @@ ipcMain.handle('save-export-file', async (_event, { format, content, defaultFile
       const pdfData = await win.webContents.printToPDF({ landscape: true, marginsType: 1, printBackground: true });
       win.destroy();
       fs.writeFileSync(result.filePath, pdfData);
+    } else if (format === 'word') {
+      const { courseKeys, allStudents, missingStudents, stats } = wordData;
+
+      const HEADER_COLOR = '1e3a5f';
+      const PASS_COLOR   = '166534';
+      const FAIL_COLOR   = '991b1b';
+      const WARN_COLOR   = '92400e';
+      const WARN_BG      = 'fffbeb';
+
+      const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+      const cellBorder = {
+        top:    { style: BorderStyle.SINGLE, size: 1, color: 'd1d5db' },
+        bottom: { style: BorderStyle.SINGLE, size: 1, color: 'd1d5db' },
+        left:   { style: BorderStyle.SINGLE, size: 1, color: 'd1d5db' },
+        right:  { style: BorderStyle.SINGLE, size: 1, color: 'd1d5db' },
+      };
+
+      function hdrCell(text) {
+        return new TableCell({
+          shading: { fill: HEADER_COLOR },
+          borders: cellBorder,
+          children: [new Paragraph({
+            children: [new TextRun({ text, bold: true, color: 'FFFFFF', size: 16 })],
+            alignment: AlignmentType.CENTER,
+          })]
+        });
+      }
+
+      function dataCell(text, opts = {}) {
+        const { color, bold, bg, align } = opts;
+        return new TableCell({
+          shading: bg ? { fill: bg } : undefined,
+          borders: cellBorder,
+          children: [new Paragraph({
+            children: [new TextRun({ text: String(text ?? '-'), color: color || '000000', bold: bold || false, size: 16 })],
+            alignment: align || AlignmentType.CENTER,
+          })]
+        });
+      }
+
+      function eligCell(val) {
+        return dataCell(val ? '✓' : '✗', { color: val ? PASS_COLOR : FAIL_COLOR, bold: true });
+      }
+
+      // Header row
+      const headerCells = [
+        'Öğrenci No', 'Ad Soyad', 'Listede',
+        'GNO', 'AGNO', 'Sınıf', 'Dönem',
+        'Staj I', 'Staj II', 'BİL493', 'BİL494',
+        ...courseKeys
+      ].map(hdrCell);
+
+      // Student rows
+      const studentRows = allStudents.map(s => {
+        const isUnlisted = s.inList === false;
+        const bg = isUnlisted ? WARN_BG : undefined;
+        return new TableRow({
+          children: [
+            dataCell(s.studentNo, { bg }),
+            dataCell(s.studentName || '-', { bg, align: AlignmentType.LEFT }),
+            dataCell(isUnlisted ? 'Hayır' : 'Evet', { bg, color: isUnlisted ? WARN_COLOR : undefined }),
+            dataCell(s.gno || '-', { bg }),
+            dataCell(s.agno || '-', { bg }),
+            dataCell(s.sinif ? s.sinif + '. Sınıf' : '-', { bg }),
+            dataCell(s.donem || '-', { bg }),
+            eligCell(s.staj1Eligible),
+            eligCell(s.staj2Eligible),
+            eligCell(s.bil493Eligible),
+            eligCell(s.bil494Eligible),
+            ...courseKeys.map(c => dataCell(s.courses[c] || '-', { bg })),
+          ]
+        });
+      });
+
+      // Missing rows
+      const missingRows = missingStudents.map(s => new TableRow({
+        children: [
+          dataCell(s.studentNo, { bg: 'fef9c3' }),
+          dataCell(s.studentName || '-', { bg: 'fef9c3', align: AlignmentType.LEFT }),
+          dataCell('Evet', { bg: 'fef9c3' }),
+          ...Array(8 + courseKeys.length).fill(null).map((_, i) =>
+            i === 0
+              ? dataCell('⚠ Transkript bulunamadı', { bg: 'fef9c3', color: WARN_COLOR })
+              : dataCell('', { bg: 'fef9c3' })
+          )
+        ]
+      }));
+
+      const table = new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({ tableHeader: true, children: headerCells }),
+          ...studentRows,
+          ...missingRows
+        ]
+      });
+
+      const doc = new Document({
+        sections: [{
+          children: [
+            new Paragraph({
+              text: 'Staj / BİL493 / BİL494 Uygunluk Raporu',
+              heading: HeadingLevel.HEADING_1,
+              spacing: { after: 100 }
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: `Toplam: ${stats.total} öğrenci  |  Staj I: ${stats.staj1}  |  Staj II: ${stats.staj2}  |  BİL493: ${stats.bil493}  |  BİL494: ${stats.bil494}  |  Tarih: ${stats.date}`, size: 16, color: '555555' })
+              ],
+              spacing: { after: 200 }
+            }),
+            table
+          ]
+        }]
+      });
+
+      const buffer = await Packer.toBuffer(doc);
+      fs.writeFileSync(result.filePath, buffer);
     } else {
       fs.writeFileSync(result.filePath, content, 'utf-8');
     }

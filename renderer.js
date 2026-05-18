@@ -530,8 +530,33 @@ async function doExport(format) {
   const engine = activeMode === 'gemini' ? 'gemini' : 'pdfplumber';
   const base = `staj-rapor-${date}-${engine}`;
   const map = { csv: `${base}.csv`, word: `${base}.docx`, pdf: `${base}.pdf` };
-  const content = format === 'csv' ? buildExportCSV() : buildExportHTML();
-  const result = await window.electronAPI.saveExportFile({ format, content, defaultFilename: map[format] });
+
+  let payload;
+  if (format === 'word') {
+    const courseKeys = allStudents.length > 0 ? Object.keys(allStudents[0].courses) : [];
+    payload = {
+      format,
+      defaultFilename: map[format],
+      wordData: {
+        courseKeys,
+        allStudents,
+        missingStudents,
+        stats: {
+          total: allStudents.length,
+          staj1: allStudents.filter(s => s.staj1Eligible).length,
+          staj2: allStudents.filter(s => s.staj2Eligible).length,
+          bil493: allStudents.filter(s => s.bil493Eligible).length,
+          bil494: allStudents.filter(s => s.bil494Eligible).length,
+          date: new Date().toLocaleDateString('tr-TR')
+        }
+      }
+    };
+  } else {
+    const content = format === 'csv' ? buildExportCSV() : buildExportHTML();
+    payload = { format, content, defaultFilename: map[format] };
+  }
+
+  const result = await window.electronAPI.saveExportFile(payload);
   if (result?.error) alert('Dışa aktarma hatası: ' + result.error);
 }
 

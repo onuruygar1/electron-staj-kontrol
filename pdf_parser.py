@@ -90,6 +90,20 @@ def map_canonical(code):
 # Kalma notları
 FAILING_GRADES = {"F1", "F2", "XX", "F"}
 
+# Harf notu sıralaması (geçer notlar arasında karşılaştırma için)
+GRADE_ORDER = {
+    "F": 0, "F1": 0, "F2": 0, "XX": 0,
+    "D": 1, "D+": 2,
+    "C-": 3, "C": 4, "C+": 5,
+    "B-": 6, "B": 7, "B+": 8,
+    "A-": 9, "A": 10, "A+": 11,
+    "Y": 5, "P": 5,
+}
+
+
+def grade_rank(grade):
+    return GRADE_ORDER.get(clean_grade(grade), -1)
+
 
 def is_passing(grade):
     return bool(grade) and clean_grade(grade) not in FAILING_GRADES
@@ -97,10 +111,11 @@ def is_passing(grade):
 
 def best_grade(existing, new):
     """
-    İki not arasından en doğru olanı seçer:
-      - Geçer not her zaman kalan/F notuna üstün gelir.
-      - İkisi de aynı türdeyse (ikisi de geçer veya ikisi de kalan) en son görülen (new) kazanr.
-    Bu kural belgenin sırasından bağımsız dönüşümü garanti eder.
+    İki not arasından görüntülenecek notu seçer:
+      - İkisi de geçer → daha yüksek notu al (A > B > C > D).
+      - Biri geçer biri kalan/devam (F1/F2/XX) → en son görülen (new) kazanır;
+        öğrenci dersi tekrar aldıysa ya da hâlâ devam ediyorsa güncel durum yansıtılır.
+      - İkisi de kalan/devam → en son görülen (new) kazanır.
     """
     if existing is None:
         return new
@@ -108,11 +123,11 @@ def best_grade(existing, new):
         return existing
     p_ex = is_passing(existing)
     p_new = is_passing(new)
-    if p_new and not p_ex:
-        return new   # yeni geçer, eski kaldı → yeni
-    if p_ex and not p_new:
-        return existing  # eski geçer, yeni kaldı → mevcut koru
-    return new  # ikisi de aynı türde → en son görülen
+    if p_ex and p_new:
+        # İkisi de geçer → daha iyi notu koru
+        return new if grade_rank(new) >= grade_rank(existing) else existing
+    # Diğer tüm durumlar (geçer→kalan, kalan→geçer, kalan→kalan) → en son görülen
+    return new
 
 
 def find_student_no(text):
@@ -208,6 +223,56 @@ def find_donem(text):
     return None
 
 
+def dedup_name(name):
+    """
+    PDF çift katman baskı artefaktlarını giderir:
+      1. "AAHHMMEETT YYIILLMMAAZZ" -> "AHMET YILMAZ"  (her karakter çift)
+      2. "AHMET AHMET YILMAZ YILMAZ" -> "AHMET YILMAZ" (her kelime çift / bitişik)
+      3. "AHMET YILMAZ AHMET YILMAZ" -> "AHMET YILMAZ" (tam dizi çift)
+    Gerçek çift harfler (GÜLLÜ, SERAP vb.) korunur; çünkü kontrol
+    TÜM karakterlerin/kelimelerin çiftlenmesini arar.
+    """
+    s = name.strip()
+    if not s:
+        return s
+
+    # 1. Her karakter çift mi? (boşluklar sayılmaz)
+    non_sp = [c for c in s if c != " "]
+    if len(non_sp) >= 6 and len(non_sp) % 2 == 0:
+        if all(non_sp[i] == non_sp[i + 1] for i in range(0, len(non_sp), 2)):
+            result, skip = [], False
+            for c in s:
+                if c == " ":
+                    result.append(c)
+                    skip = False
+                elif skip:
+                    skip = False
+                else:
+                    result.append(c)
+                    skip = True
+            return re.sub(r" {2,}", " ", "".join(result)).strip()
+
+    # 2. Bitişik kelime çiftleri: "A A B B" -> "A B"
+    words = s.split()
+    deduped = []
+    i = 0
+    while i < len(words):
+        deduped.append(words[i])
+        if i + 1 < len(words) and words[i].lower() == words[i + 1].lower():
+            i += 2
+        else:
+            i += 1
+    if len(deduped) < len(words):
+        return " ".join(deduped)
+
+    # 3. Tam metin çifti: "AB AB" -> "AB"
+    half = len(s) // 2
+    if half > 3 and s[:half].strip().lower() == s[half:].strip().lower():
+        return s[:half].strip()
+
+    return s
+
+
 def find_student_name(text):
     label_re = re.compile(
         r"(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:", re.IGNORECASE
@@ -228,7 +293,7 @@ def find_student_name(text):
         # İlk satırı al, rakam içeriyorsa geçersiz say
         candidate = raw.split("\n")[0].strip()
         if len(candidate) >= 3 and not re.search(r"\d", candidate):
-            return candidate
+            return dedup_name(candidate)
     # Fallback: ilk 15 satırda tamamen büyük harfli Türkçe isim ara
     for line in text.split("\n")[:15]:
         t = line.strip()
@@ -236,7 +301,7 @@ def find_student_name(text):
             words = t.split()
             if len(words) >= 2 and all(len(w) >= 2 for w in words):
                 if not re.search(r"\b[A-Z]{2,4}\d{3}\b", t):
-                    return t
+                    return dedup_name(t)
     return "Bilinmiyor"
 
 
@@ -367,7 +432,16 @@ def extract_ordered_text(plumber_page):
     ordered_lines = []
     for row_key in sorted(lines_dict):
         row_words = sorted(lines_dict[row_key], key=lambda w: w["x0"])
-        ordered_lines.append(" ".join(w["text"] for w in row_words))
+        deduped_row = []
+        for w in row_words:
+            if (
+                deduped_row
+                and abs(deduped_row[-1]["x0"] - w["x0"]) < 3
+                and deduped_row[-1]["text"].lower() == w["text"].lower()
+            ):
+                continue  # çakışan kopya, atla
+            deduped_row.append(w)
+        ordered_lines.append(" ".join(w["text"] for w in deduped_row))
 
     return "\n".join(ordered_lines)
 
