@@ -12,19 +12,6 @@ function getPdfParserExePath() {
   return path.join(__dirname, 'pdf_parser.exe');
 }
 
-// .env dosyasından API key yükle (dotenv gerektirmez)
-function loadEnvApiKey() {
-  try {
-    const envPath = path.join(__dirname, '.env');
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const match = line.match(/^GEMINI_API_KEY\s*=\s*(.+)$/);
-      if (match) return match[1].trim();
-    }
-  } catch {}
-  return '';
-}
-const ENV_GEMINI_API_KEY = loadEnvApiKey();
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -107,19 +94,6 @@ const BİL493_ORTAK     = ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 
 
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
 
-// Gemini'ye sadece karıştırılabilecek staj/bölüm dersleri gönderilir;
-// MAT/FİZ/BİL101-124 regex ile zaten doğru okunuyor, prompt boyutunu küçültmek için dışarıda bırakılır.
-const GEMINI_COURSES = [
-  'BİL240', 'BİL265', 'BİL300',
-  'BİL324', 'BİL332',
-  'BİL343', 'BİL344', 'BİL367', 'BİL386',
-  'BİL493',
-  'MAT151', 'MAT152'
-];
-
-// Gemini 2.5 Flash fiyatlandırması ($/1M token, Mayıs 2026)
-const GEMINI_INPUT_PRICE_PER_1M  = 0.075;
-const GEMINI_OUTPUT_PRICE_PER_1M = 0.300;
 
 const GRADE_REGEX = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
 
@@ -931,117 +905,6 @@ ipcMain.handle('pick-student-list-pdf', async () => {
   }
 });
 
-// Sayfadaki son takip edilen ders kodu konumuna göre dinamik metin penceresi döndürür.
-function getRelevantTextWindow(pageText, trailingBuffer = 800, maxChars = 25000) {
-  const normalized = normalizeText(pageText).toUpperCase();
-
-  let lastEnd = -1;
-  for (const aliases of Object.values(COURSE_ALIASES)) {
-    for (const alias of aliases) {
-      const aliasText = normalizeText(alias).toUpperCase();
-      let from = 0;
-      while (from < normalized.length) {
-        const idx = normalized.indexOf(aliasText, from);
-        if (idx === -1) break;
-        const end = idx + aliasText.length;
-        if (end > lastEnd) lastEnd = end;
-        from = end;
-      }
-    }
-  }
-
-  const cutoff = lastEnd === -1
-    ? pageText.length          // ders kodu yoksa tüm sayfa
-    : lastEnd + trailingBuffer;
-
-  return pageText.substring(0, Math.min(cutoff, maxChars));
-}
-
-async function callGeminiForStudentWithContext(pageText, apiKey, _retryCount = 0) {
-  const courseList = TRACKED_COURSES.join(', ');
-
-  const aliasLines = Object.entries(COURSE_ALIASES)
-    .filter(([canonical, aliases]) => aliases.length > 1)
-    .map(([canonical, aliases]) => `  ${canonical} = ${aliases.join(' = ')}`)
-    .join('\n');
-
-  const prompt =
-    `Türk üniversitesi transkriptinden ders notlarını oku ve JSON olarak döndür.\n\n` +
-    `Takip edilecek dersler: ${courseList}\n\n` +
-    `Ders kodu eşdeğerlikleri (transkriptte farklı kodla geçebilir):\n${aliasLines}\n\n` +
-    `Kurallar:\n` +
-    `- Her ders için transkriptten doğrudan notu oku; transkriptte eşdeğer kod varsa onu kullan\n` +
-    `- Ders birden fazla alınmışsa EN SON alınan notu kullan\n` +
-    `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
-    `- Ders transkriptte yoksa null döndür\n` +
-    `- JSON key olarak her zaman sol taraftaki kanonik kodu kullan (örn: BİL343)\n` +
-    `- "studentName" alanına transkript başlığındaki öğrencinin adı soyadını büyük harflerle yaz (örn: "HATİCE SILA AKMAN"), bulamazsan null\n` +
-    `- SADECE JSON döndür\n\n` +
-    `Transkript:\n${getRelevantTextWindow(pageText)}`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-  let response;
-  try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 1024,
-            thinkingConfig: { thinkingBudget: 0 }
-          }
-        })
-      }
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    if (response.status === 429) {
-      if (_retryCount >= 3) throw new Error('Gemini rate limit: 3 denemede 429 alındı, atlanıyor');
-      const base = parseInt(response.headers.get('Retry-After') || '30', 10) * 1000;
-      const jitter = Math.random() * 10000;
-      const waitMs = Math.min(base + jitter, 90000);
-      _analyzeProgress = { ..._analyzeProgress, rateLimited: true, waitUntil: Date.now() + waitMs };
-      await new Promise(r => setTimeout(r, waitMs));
-      _analyzeProgress = { ..._analyzeProgress, rateLimited: false };
-      return callGeminiForStudentWithContext(pageText, apiKey, _retryCount + 1);
-    }
-    throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 200)}`);
-  }
-
-  const data = await response.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error(`Gemini boş yanıt (${data.candidates?.[0]?.finishReason || '?'})`);
-  }
-
-  const promptTokens = data.usageMetadata?.promptTokenCount     || 0;
-  const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
-
-  const parsed = JSON.parse(rawText);
-  const courses = {};
-  for (const course of TRACKED_COURSES) courses[course] = null;
-  let studentName = null;
-  for (const [key, value] of Object.entries(parsed)) {
-    if (key === 'studentName') {
-      studentName = value ? String(value).trim() : null;
-      continue;
-    }
-    const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
-    if (canonical) courses[canonical] = value ? cleanGradeToken(String(value)) : null;
-  }
-  return { courses, studentName, promptTokens, outputTokens };
-}
 
 function buildParseSummary(students) {
   const summary = {
@@ -1371,7 +1234,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       };
     }
 
-    // ── Mevcut regex / Gemini modu ──────────────────────────────────────────────────────────────
+    // ── Regex modu (pdf_parser.exe yoksa fallback) ──────────────────────────────────────────────
     let pages, totalPages;
     const exePath = getPdfParserExePath();
     if (fs.existsSync(exePath)) {
@@ -1415,59 +1278,8 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       return true;
     });
 
-    const apiKey = (typeof options.apiKey === 'string' ? options.apiKey.trim() : '') || ENV_GEMINI_API_KEY;
-
     const parseResults = [];
-    let totalPromptTokens = 0;
-    let totalOutputTokens = 0;
-
-    if (apiKey) {
-      // Önce tüm öğrenciler için regex parser çalıştır
-      const regexResults = relevantPages.map(parseStudentPage);
-      const total = regexResults.length;
-      let doneCount = 0;
-
-      _analyzeProgress = { phase: 'gemini-start', done: 0, total };
-
-      // 5'li gruplar halinde paralel Gemini doğrulaması — her öğrenci bitince progress gönder
-      const CONCURRENCY = 5;
-      for (let i = 0; i < regexResults.length; i += CONCURRENCY) {
-        const chunk = regexResults.slice(i, i + CONCURRENCY);
-        const chunkPages = relevantPages.slice(i, i + CONCURRENCY);
-
-        const chunkResults = await Promise.all(
-          chunk.map(async (regexResult, idx) => {
-            let result;
-            try {
-              const { courses, studentName, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
-                chunkPages[idx], apiKey
-              );
-              totalPromptTokens += promptTokens;
-              totalOutputTokens += outputTokens;
-              // Gemini sadece GEMINI_COURSES'u doğrular; MAT/FİZ/BİL101-124 için regex değerini koru
-              const mergedCourses = { ...regexResult.courses };
-              for (const c of TRACKED_COURSES) mergedCourses[c] = courses[c];
-              result = {
-                ...regexResult,
-                studentName: studentName || regexResult.studentName,
-                courses: mergedCourses,
-                parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
-              };
-            } catch (err) {
-              console.warn(`Gemini hatası (${regexResult.studentNo}): ${err.message} — regex kullanılıyor`);
-              result = regexResult;
-            }
-            doneCount++;
-            _analyzeProgress = { phase: 'gemini', done: doneCount, total };
-            console.log(`Gemini: ${doneCount}/${total} — ${result.studentName || result.studentNo}`);
-            return result;
-          })
-        );
-        parseResults.push(...chunkResults);
-      }
-    } else {
-      for (const page of relevantPages) parseResults.push(parseStudentPage(page));
-    }
+    for (const page of relevantPages) parseResults.push(parseStudentPage(page));
 
     const students = parseResults
       .map(evaluateStudent)
@@ -1491,11 +1303,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       inList: !filterEntries || filterEntries.some(e => studentMatches(s, e))
     }));
 
-    const estimatedCostUSD =
-      (totalPromptTokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_1M +
-      (totalOutputTokens / 1_000_000) * GEMINI_OUTPUT_PRICE_PER_1M;
-
-    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${studentsTagged.length}${apiKey ? ` | Gemini kullanıldı | ${totalPromptTokens}p + ${totalOutputTokens}o token | ~$${estimatedCostUSD.toFixed(4)}` : ''}`);
+    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${studentsTagged.length}`);
 
     const parseSummary = buildParseSummary(studentsTagged);
 
@@ -1505,9 +1313,9 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       totalPages,
       totalStudents: studentsTagged.length,
       parseSummary,
-      geminiUsed: Boolean(apiKey),
+      geminiUsed: false,
       pdfplumberUsed: false,
-      tokenStats: apiKey ? { totalPromptTokens, totalOutputTokens, estimatedCostUSD } : null,
+      tokenStats: null,
       missingStudents,
       students: studentsTagged
     };

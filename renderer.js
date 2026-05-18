@@ -313,32 +313,13 @@ analyzeBtn.addEventListener('click', async () => {
 
   let _pollTimer = null;
   function startPolling() {
-    if (activeMode === 'pdfplumber') {
-      summaryEl.innerHTML = '<div class="msg">⏳ pdfplumber ile ayrıştırılıyor…</div>';
-      return;
-    }
-    _pollTimer = setInterval(async () => {
-      try {
-        const p = await window.electronAPI.getProgress();
-        if (!p) return;
-        if (p.phase === 'gemini-start') {
-          const rlMsg = p.rateLimited ? ' ⚠ Rate limit bekleniyor…' : '';
-          summaryEl.innerHTML = `<div class="msg">⏳ Gemini analizi başlıyor… (${p.total} öğrenci)${rlMsg}</div>`;
-        } else if (p.phase === 'gemini') {
-          const pct = Math.round((p.done / p.total) * 100);
-          const rlMsg = p.rateLimited ? ' ⚠ Rate limit bekleniyor…' : '';
-          summaryEl.innerHTML = `<div class="msg">⏳ Gemini ile analiz ediliyor… ${p.done}/${p.total} öğrenci (${pct}%)${rlMsg}</div>`;
-        }
-      } catch (_) {}
-    }, 300);
+    summaryEl.innerHTML = '<div class="msg">⏳ pdfplumber ile ayrıştırılıyor…</div>';
   }
   function stopPolling() { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; } }
 
   startPolling();
   try {
-    const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
-    const analyzeOptions = { mode: activeMode };
-    if (activeMode === 'gemini' && apiKey) analyzeOptions.apiKey = apiKey;
+    const analyzeOptions = { mode: 'pdfplumber' };
     if (studentListData) analyzeOptions.filterStudentEntries = studentListData.studentEntries;
     const data = await window.electronAPI.pickPdfAndAnalyze(analyzeOptions);
     stopPolling();
@@ -356,7 +337,6 @@ analyzeBtn.addEventListener('click', async () => {
     const bil494Count   = data.students.filter(s => s.bil494Eligible).length;
     const unlistedCount = data.students.filter(s => !s.inList).length;
     const parseSummary = data.parseSummary || {};
-    const geminiUsed = Boolean(data.geminiUsed);
 
     const totalEntries = parseSummary.totalCourseEntries || 0;
     const missingEntries = parseSummary.missingCourseEntries || 0;
@@ -366,15 +346,7 @@ analyzeBtn.addEventListener('click', async () => {
 
     const parserInfo = data.pdfplumberUsed
       ? '<span class="pdfplumber-badge">pdfplumber (Yerleşik)</span>'
-      : geminiUsed
-        ? (() => {
-            const ts = data.tokenStats;
-            const tokenLine = ts
-              ? ` · ${ts.totalPromptTokens.toLocaleString('tr-TR')} prompt + ${ts.totalOutputTokens.toLocaleString('tr-TR')} output token · ~$${ts.estimatedCostUSD.toFixed(4)}`
-              : '';
-            return `<span class="gemini-badge">Gemini 2.5 Flash</span>${tokenLine}`;
-          })()
-        : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
+      : `Düşük güvenli öğrenci: <strong>${parseSummary.lowConfidenceStudents || 0}</strong> · Fallback: <strong>${parseSummary.fallbackUsedStudents || 0}</strong> · Düşük güvenli ders: <strong>${parseSummary.lowConfidenceCourses || 0}</strong>`;
 
     const listInfo = studentListData && missingStudents.length > 0
       ? `<div class="parse-summary" style="color:#b91c1c">⚠ ${missingStudents.length} öğrencinin transkripti bulunamadı${unlistedCount > 0 ? ` · ${unlistedCount} öğrenci listede yok` : ''}</div>`

@@ -398,42 +398,71 @@ def extract_from_text(text):
 
 
 # ── Soldan sağa düzgün sıralı metin çıkarımı ────────────────────────────────
-def extract_ordered_text(plumber_page):
+def _group_words_into_lines(words, column_index, y_tolerance=3):
+    """extractor.ts groupWordsIntoLines() mantığını Python'a taşır."""
+    # y'ye göre büyükten küçüğe (pdfplumber'da top küçük = sayfanın üstü,
+    # ama extractor.ts'de y büyük = sayfanın üstü; burada top kullanıyoruz)
+    sorted_words = sorted(words, key=lambda w: (w["top"], w["x0"]))
+    lines = []  # list of {"top": float, "words": [...], "col": int}
+    for w in sorted_words:
+        matched = None
+        for line in lines:
+            if abs(line["top"] - w["top"]) <= y_tolerance:
+                matched = line
+                break
+        if matched:
+            matched["words"].append(w)
+            matched["words"].sort(key=lambda x: x["x0"])
+            # ortalama top
+            matched["top"] = sum(ww["top"] for ww in matched["words"]) / len(matched["words"])
+        else:
+            lines.append({"top": w["top"], "words": [w], "col": column_index})
+    return lines
+
+
+def extract_ordered_text(plumber_page, column_count=3, y_tolerance=3):
     """
-    extract_words() ile kelimeleri önce y (satır), sonra x (soldan sağa)
-    sırasına göre birleştirir. Çift sütunlu sayfalarda extract_text()
-    kelimeleri karıştırabilir; bu yöntem daha güvenilirdir.
+    extractor.ts buildLinesInNewspaperOrder() yaklaşımını uygular:
+      1. Sayfayı column_count eşit sütuna böler (sabit genişlik).
+      2. Her sütunun kelimelerini yukarıdan aşağıya satırlara gruplar.
+      3. Satırları (sütun, top) sırasıyla birleştirir → sol sütun önce, sağ sütun son.
+    Böylece tekrar alınan derslerde en sağ (en yeni dönem) sütunun notu
+    her zaman son işlenir ve "son görülen kazanır" kuralı doğru çalışır.
     """
     try:
-        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=3)
+        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=y_tolerance)
     except Exception:
         return plumber_page.extract_text(x_tolerance=3, y_tolerance=3) or ""
 
     if not words:
         return plumber_page.extract_text(x_tolerance=3, y_tolerance=3) or ""
 
-    # Satırları y koordinatına göre grupla (5 piksel tolerans)
-    ROW_SNAP = 5
-    lines_dict = {}
-    for w in words:
-        row_key = round(w["top"] / ROW_SNAP) * ROW_SNAP
-        lines_dict.setdefault(row_key, []).append(w)
+    # Sayfa x aralığını kelime koordinatlarından hesapla (extractor.ts gibi)
+    min_x = min(w["x0"] for w in words)
+    max_x = max(w["x1"] for w in words)
+    page_width = max_x - min_x
+    col_width = page_width / column_count
 
-    ordered_lines = []
-    for row_key in sorted(lines_dict):
-        row_words = sorted(lines_dict[row_key], key=lambda w: w["x0"])
-        deduped_row = []
-        for w in row_words:
-            if (
-                deduped_row
-                and abs(deduped_row[-1]["x0"] - w["x0"]) < 3
-                and deduped_row[-1]["text"].lower() == w["text"].lower()
-            ):
-                continue  # çakışan kopya, atla
-            deduped_row.append(w)
-        ordered_lines.append(" ".join(w["text"] for w in deduped_row))
+    all_lines = []
+    for col_idx in range(column_count):
+        col_min = min_x + col_idx * col_width
+        col_max = (max_x + 1) if col_idx == column_count - 1 else (min_x + (col_idx + 1) * col_width)
+        col_words = [w for w in words if col_min <= w["x0"] < col_max]
+        if not col_words:
+            continue
+        col_lines = _group_words_into_lines(col_words, col_idx, y_tolerance)
+        all_lines.extend(col_lines)
 
-    return "\n".join(ordered_lines)
+    # (sütun, top) sırasıyla sırala → col 0 tamamen biter, sonra col 1, ...
+    all_lines.sort(key=lambda ln: (ln["col"], ln["top"]))
+
+    result_lines = []
+    for ln in all_lines:
+        text = " ".join(w["text"] for w in ln["words"]).strip()
+        if text:
+            result_lines.append(text)
+
+    return "\n".join(result_lines)
 
 
 # ── Sayfa işleme ─────────────────────────────────────────────────────────────
@@ -513,7 +542,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if text_only:
-        # Sadece sayfa metinlerini dönür (Gemini için)
+        # Sadece sayfa metinlerini dönür (regex modu için fallback)
         pages_out = []
         total_pages = 0
         try:
