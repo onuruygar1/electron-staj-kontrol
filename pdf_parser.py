@@ -110,23 +110,11 @@ def is_passing(grade):
 
 
 def best_grade(existing, new):
-    """
-    İki not arasından görüntülenecek notu seçer:
-      - İkisi de geçer → daha yüksek notu al (A > B > C > D).
-      - Biri geçer biri kalan/devam (F1/F2/XX) → en son görülen (new) kazanır;
-        öğrenci dersi tekrar aldıysa ya da hâlâ devam ediyorsa güncel durum yansıtılır.
-      - İkisi de kalan/devam → en son görülen (new) kazanır.
-    """
+    """Her zaman en son görülen notu döndürür (sayfa düzeyinde soldan sağa, yukadan aşağıya)."""
     if existing is None:
         return new
     if new is None:
         return existing
-    p_ex = is_passing(existing)
-    p_new = is_passing(new)
-    if p_ex and p_new:
-        # İkisi de geçer → daha iyi notu koru
-        return new if grade_rank(new) >= grade_rank(existing) else existing
-    # Diğer tüm durumlar (geçer→kalan, kalan→geçer, kalan→kalan) → en son görülen
     return new
 
 
@@ -355,11 +343,13 @@ def extract_from_tables(tables):
             else:
                 continue
 
+            # Satırdaki tüm hücreleri tara — break YOK.
+            # Aynı satırda birden fazla geçerli not olabilir (yatay çok-sütunlu tablo);
+            # en sağtaki (en son dönem) notun kazan ması için her hepsi güncellenir.
             for cell in search_cells:
                 g = clean_grade(cell)
                 if VALID_GRADE_RE.match(g):
-                    results[current_canonical] = best_grade(results.get(current_canonical), g)
-                    break
+                    results[current_canonical] = g
     return results
 
 
@@ -461,10 +451,11 @@ def parse_page(plumber_page):
     tables = plumber_page.extract_tables()
     courses = extract_from_tables(tables)
 
-    # Metin bazlı çıkarım; best_grade ile birleştir.
+    # Metin bazlı çıkarım; yalnızca tablo sonucu olmayan dersler için kullan.
     text_courses = extract_from_text(text)
     for c, g in text_courses.items():
-        courses[c] = best_grade(courses.get(c), g)
+        if courses.get(c) is None:
+            courses[c] = g
 
     return {
         "studentNo": student_no,
