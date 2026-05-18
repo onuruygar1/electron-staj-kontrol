@@ -58,7 +58,6 @@ function gradeRank(grade) {
 }
 
 const COURSE_ALIASES = {
-  // Temel CS dersleri
   BİL101: ['BİL101', 'BIL101', 'CSE101'],
   BİL105: ['BİL105', 'BIL105', 'CSE105'],
   BİL122: ['BİL122', 'BIL122', 'CSE122'],
@@ -73,10 +72,8 @@ const COURSE_ALIASES = {
   BİL367: ['BİL367', 'BIL367', 'CSE367'],
   BİL386: ['BİL386', 'BIL386', 'CSE386'],
   BİL493: ['BİL493', 'BIL493', 'CSE493'],
-  // Matematik
   MAT151: ['MAT151', 'MATH151'],
   MAT152: ['MAT152', 'MATH152'],
-  // Fizik
   FİZ103: ['FİZ103', 'FIZ103', 'PHYS103'],
   FİZ104: ['FİZ104', 'FIZ104', 'PHYS104'],
   FİZ105: ['FİZ105', 'FIZ105', 'PHYS105'],
@@ -86,7 +83,6 @@ const COURSE_ALIASES = {
 const STAJ1_REQUIRED = ['BİL240', 'BİL265'];
 const STAJ2_REQUIRED = ['BİL343', 'BİL367', 'BİL344', 'BİL386'];
 
-// BİL493 ön koşul kuralı: Bölüm derslerinden en az 4 tanesi + tüm ortak dersler ≥ D
 const BİL493_BOLUM     = ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'];
 const BİL493_BOLUM_MIN = 4;
 const BİL493_ORTAK     = ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
@@ -139,8 +135,6 @@ function extractPages(fullText) {
 function findStudentNo(pageText) {
   const text = normalizeText(pageText);
 
-  // "Öğrenci No", "Öğrenci Numarası", "Öğr. No", "Student No" vb.
-  // Ayırıcı: boşluk, ":", "-" kombinasyonları
   const patterns = [
     /Öğrenci\s+No[:\-\s]+(\d{7,10})/i,
     /Öğrenci\s+Numara[sı]+[:\-\s]+(\d{7,10})/i,
@@ -154,7 +148,6 @@ function findStudentNo(pageText) {
     if (m) return m[1];
   }
 
-  // Son çare: sayfada tek başına duran 8 haneli sayı (öğrenci no formatı)
   const allNums = [...text.matchAll(/\b(\d{8})\b/g)].map(m => m[1]);
   if (allNums.length === 1) return allNums[0];
 
@@ -164,25 +157,20 @@ function findStudentNo(pageText) {
 function findStudentName(pageText) {
   const normalized = normalizeText(pageText);
 
-  // Olası etiket varyantları: "Adı Soyadı", "Ad Soyad", "Ad / Soyad", "Name"
   const labelRe = /(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:/i;
 
-  // Etiketten sonra alanı bitiren kelimeler — önce \s+ zorunluluğu yok
   const stopRe = /(?:K:\s*AKTS|AKTS|K:|Bölüm|GNO|Program|Fakülte|Faculty|Dept|T\.C\.|Doğum|Mezun|Şube|Tarih)/i;
 
   const labelMatch = normalized.match(labelRe);
   if (labelMatch) {
     const afterLabel = normalized.slice(labelMatch.index + labelMatch[0].length);
-    // Baştaki tüm boşluk / iki nokta / tire karakterlerini temizle
     const afterClean = afterLabel.replace(/^[\s:\-]+/, '');
     const stopMatch = afterClean.match(stopRe);
     const raw = stopMatch ? afterClean.slice(0, stopMatch.index) : afterClean.split('\n')[0];
     const candidate = raw.split('\n')[0].trim();
-    // Rakam içeriyorsa isim değildir
     if (candidate.length >= 3 && !/\d/.test(candidate)) return candidate;
   }
 
-  // Son çare: sayfanın ilk satırlarında tamamen büyük harfli 2+ kelime grubu
   for (const line of normalized.split('\n').slice(0, 15)) {
     const trimmed = line.trim();
     if (/^[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s]{4,}$/.test(trimmed)) {
@@ -198,7 +186,6 @@ function findStudentName(pageText) {
 
 function findGno(pageText) {
   const text = normalizeText(pageText);
-  // AGNO satırlarının pozisyonlarını atla
   const agnoRe = /AGNO\s*[:\=]?\s*\d[\.,]\d{2}/gi;
   const agnoRanges = [];
   let am;
@@ -292,21 +279,14 @@ function isLisansPage(pageText) {
 function isRelevantPage(pageText) {
   const text = normalizeText(pageText).toUpperCase();
 
-  // Takip edilen 20 dersin tüm kod varyantlarını kontrol et
-  // (üst seviye BİL + MAT/FİZ + alt seviye BİL)
   const ALL_TRACKED_CODES = [
-    // BİL varyantları
     'BİL101','BİL105','BİL122','BİL124','BİL240','BİL265',
     'BİL300','BİL324','BİL332','BİL343','BİL344','BİL367','BİL386','BİL493',
-    // BIL (noktasız I) varyantları
     'BIL101','BIL105','BIL122','BIL124','BIL240','BIL265',
     'BIL300','BIL324','BIL332','BIL343','BIL344','BIL367','BIL386','BIL493',
-    // CSE varyantları
     'CSE101','CSE105','CSE122','CSE124','CSE240','CSE265',
     'CSE300','CSE324','CSE332','CSE343','CSE344','CSE367','CSE386','CSE493',
-    // MAT / MATH
     'MAT151','MAT152','MATH151','MATH152',
-    // FİZ / PHYS
     'FİZ103','FİZ104','FİZ105','FİZ110',
     'FIZ103','FIZ104','FIZ105','FIZ110',
     'PHYS103','PHYS104','PHYS105','PHYS110',
@@ -437,9 +417,6 @@ function buildEmptyCourseMap(defaultValueFactory) {
 function pickBestCandidate(candidates) {
   if (!candidates || candidates.length === 0) return null;
 
-  // Ders birden fazla alınmışsa (farklı notlar = conflict):
-  //   - Her ikisi de geçer → en yüksek notu al
-  //   - Diğer durumlar    → en son satırdaki (güncel durum)
   const uniqueGrades = new Set(candidates.map(c => c.grade));
   if (uniqueGrades.size > 1) {
     const byLine = [...candidates].sort((a, b) => b.lineIndex - a.lineIndex);
@@ -453,7 +430,6 @@ function pickBestCandidate(candidates) {
     return latest;
   }
 
-  // Tek not varsa en yüksek confidence'lı, eşit ise en son satırdaki.
   const sorted = [...candidates].sort((a, b) => {
     if (a.confidence !== b.confidence) return b.confidence - a.confidence;
     return b.lineIndex - a.lineIndex;
@@ -637,8 +613,6 @@ function normalizeNameForMatch(name) {
     .join(' ');
 }
 
-// Transkriptteki isim kelimelerinin TAMAMI liste girişindeki isimde geçiyorsa eşleşir.
-// Böylece listede önde fazladan kelime olsa da eşleşme çalışır.
 function nameWordsMatch(transcriptName, listEntryName) {
   // Türkçe karakterleri ASCII eşdeğerine indirgeyerek karşılaştır.
   // Farklı kaynaklarda İ/I, Ş/S gibi tutarsızlıklar olabileceğinden
@@ -646,7 +620,7 @@ function nameWordsMatch(transcriptName, listEntryName) {
   const normalize = s => String(s || '')
     .normalize('NFC')
     .toUpperCase()
-    .replace(/İ/g, 'I').replace(/I\u0307/g, 'I') // İ ve birleşik varyant
+    .replace(/İ/g, 'I').replace(/I\u0307/g, 'I')
     .replace(/Ş/g, 'S').replace(/Ğ/g, 'G')
     .replace(/Ö/g, 'O').replace(/Ü/g, 'U')
     .replace(/Ç/g, 'C').replace(/Â/g, 'A')
@@ -657,7 +631,6 @@ function nameWordsMatch(transcriptName, listEntryName) {
   const listWords       = normalize(listEntryName);
   if (transcriptWords.length === 0 || listWords.length === 0) return false;
 
-  // İki yönlü alt-küme kontrolü: kısa tarafın tüm kelimeleri uzun tarafta mı?
   const [shorter, longerSet] = transcriptWords.length <= listWords.length
     ? [transcriptWords, new Set(listWords)]
     : [listWords,       new Set(transcriptWords)];
@@ -665,10 +638,6 @@ function nameWordsMatch(transcriptName, listEntryName) {
   return shorter.every(w => longerSet.has(w));
 }
 
-// "Son Not Döküm Belgesi" türü PDF'ten öğrenci numaralarını ve ders bilgisini çıkarır.
-// Yaklaşım: satır satır işle → 8 haneli numarayı bul → numara sonrasındaki
-// büyük harfli Türkçe kelimeleri (≥3 harf) topla.
-// Not kodları (AA, BB, CC, XX… = 2 harf), sıra no'ları ve tarihler otomatik elenir.
 function parseStudentListFromPages(pages) {
   const studentEntries = [];
   const seenNos = new Set();
@@ -688,14 +657,11 @@ function parseStudentListFromPages(pages) {
     }
 
     for (const line of text.split('\n')) {
-      // 8 haneli öğrenci numarası içeren satır mı?
       const noMatch = line.match(/\b(\d{8})\b/);
       if (!noMatch) continue;
       const studentNo = noMatch[1];
       if (seenNos.has(studentNo)) continue;
 
-      // İsim: önce numara sonrasına bak, yoksa numara öncesine bak
-      // 2 harfli not kodları (AA/BB/CC/XX…) ve kısa token'lar bu şekilde elenir
       const afterNo  = line.slice(noMatch.index + studentNo.length);
       const beforeNo = line.slice(0, noMatch.index);
       let nameWords = [...afterNo.matchAll(/[A-ZÇĞİÖŞÜ]{3,}/g)].map(m => m[0]);
@@ -722,7 +688,6 @@ function parseStudentListFromPages(pages) {
   };
 }
 
-// Progress state for polling
 let _analyzeProgress = null;
 ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
 

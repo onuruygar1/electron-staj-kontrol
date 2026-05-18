@@ -87,10 +87,8 @@ def map_canonical(code):
     return None
 
 
-# Kalma notları
 FAILING_GRADES = {"F1", "F2", "XX", "F"}
 
-# Harf notu sıralaması (geçer notlar arasında karşılaştırma için)
 GRADE_ORDER = {
     "F": 0, "F1": 0, "F2": 0, "XX": 0,
     "D": 1, "D+": 2,

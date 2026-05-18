@@ -7,54 +7,9 @@ const summaryEl    = document.getElementById('summary');
 const resultsEl    = document.getElementById('results');
 const toolbarEl    = document.getElementById('toolbar');
 const searchEl     = document.getElementById('searchInput');
-const geminiKeyEl  = document.getElementById('geminiApiKey');
-const saveKeyBtn   = document.getElementById('saveKeyBtn');
 const exportCsvBtn  = document.getElementById('exportCsvBtn');
 const exportWordBtn = document.getElementById('exportWordBtn');
 const exportPdfBtn  = document.getElementById('exportPdfBtn');
-
-// Load saved API key
-if (geminiKeyEl) geminiKeyEl.value = localStorage.getItem('geminiApiKey') || '';
-if (saveKeyBtn) {
-  saveKeyBtn.addEventListener('click', () => {
-    const key = geminiKeyEl.value.trim();
-    localStorage.setItem('geminiApiKey', key);
-    saveKeyBtn.textContent = 'Kaydedildi ✓';
-    setTimeout(() => { saveKeyBtn.textContent = 'Kaydet'; }, 1500);
-  });
-}
-
-// ── Analiz modu ──────────────────────────────────────────────────────────────
-let activeMode = localStorage.getItem('analyzeMode') || 'pdfplumber'; // 'pdfplumber' | 'gemini'
-
-const geminiKeySection = document.getElementById('geminiKeySection');
-const modeHint         = document.getElementById('modeHint');
-
-const MODE_HINTS = {
-  pdfplumber: 'Tablolar ve metin analizi ile ayrıştırır — Python gerektirmez.',
-  gemini:     'Gemini 2.5 Flash ile yüksek doğruluklu analiz. API key gerekir.'
-};
-
-function applyMode(mode) {
-  activeMode = mode;
-  localStorage.setItem('analyzeMode', mode);
-
-  document.querySelectorAll('.mode-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.mode === mode);
-  });
-
-  if (geminiKeySection) {
-    geminiKeySection.style.display = mode === 'gemini' ? 'flex' : 'none';
-  }
-  if (modeHint) modeHint.textContent = MODE_HINTS[mode] || '';
-}
-
-// İlk yükleme
-applyMode(activeMode);
-
-document.querySelectorAll('.mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => applyMode(btn.dataset.mode));
-});
 
 let allStudents      = [];
 let missingStudents  = [];
@@ -499,8 +454,7 @@ function buildExportHTML() {
 async function doExport(format) {
   if (allStudents.length === 0) return;
   const date = getExportDate();
-  const engine = activeMode === 'gemini' ? 'gemini' : 'pdfplumber';
-  const base = `staj-rapor-${date}-${engine}`;
+  const base = `staj-rapor-${date}-pdfplumber`;
   const map = { csv: `${base}.csv`, word: `${base}.docx`, pdf: `${base}.pdf` };
 
   let payload;
