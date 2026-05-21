@@ -35,6 +35,8 @@ COURSE_ALIASES = {
     "BİL367": ["BİL367", "BIL367", "CSE367"],
     "BİL386": ["BİL386", "BIL386", "CSE386"],
     "BİL493": ["BİL493", "BIL493", "CSE493"],
+    "BİL494": ["BİL494", "BIL494", "CSE494"],
+    "BİL498": ["BİL498", "BIL498", "CSE498"],
     "MAT151": ["MAT151", "MATH151"],
     "MAT152": ["MAT152", "MATH152"],
     "FİZ103": ["FİZ103", "FIZ103", "PHYS103"],
@@ -63,6 +65,7 @@ def norm(text):
     if not text:
         return ""
     t = str(text).replace("\r", "\n").replace("\t", " ")
+    t = t.replace("\xa6", "İ").replace("\xb2", "ı").replace("\xb3", "ü")
     t = t.replace("Bİ\u0307L", "BİL").replace("BIL", "BİL")
     t = re.sub(r" {2,}", " ", t)
     return t.strip()
@@ -135,50 +138,50 @@ def find_student_no(text):
 
 
 def find_gno(text):
-    """Genel Not Ortalaması (GNO) — 0.00-4.00 arası ondalıklı sayı."""
+    """Genel Not Ortalaması (GNO) — en güncel (son) değeri döndür."""
     patterns = [
-        r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",          # önce AGNO'yu atla
         r"Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"(?<![A-Za-z])GNO\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
     ]
-    # AGNO satırlarını bul, sonra GNO ara
+    # AGNO konumlarını işaretle, GNO eşleşmelerinde bunları atla
     agno_positions = set()
     for m in re.finditer(r"AGNO\s*[:\=]?\s*\d[\.,]\d{2}", text, re.IGNORECASE):
         agno_positions.update(range(m.start(), m.end()))
 
-    for pat in patterns[1:]:  # AGNO pattern'i atla
+    last_val = None
+    for pat in patterns:
         for m in re.finditer(pat, text, re.IGNORECASE):
             if m.start() not in agno_positions:
                 val = m.group(1).replace(",", ".")
                 try:
                     f = float(val)
                     if 0.0 <= f <= 4.0:
-                        return val
+                        last_val = val
                 except ValueError:
                     pass
-    return None
+    return last_val
 
 
 def find_agno(text):
-    """Ağırlıklı Genel Not Ortalaması (AGNO)."""
+    """Ağırlıklı Genel Not Ortalaması (AGNO) — en güncel (son) değeri döndür."""
     patterns = [
         r"Ağırlıklı\s+Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"Cumulative\s+GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"CGPA\s*[:\=]?\s*(\d[\.,]\d{2})",
     ]
+    last_val = None
     for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
+        for m in re.finditer(pat, text, re.IGNORECASE):
             val = m.group(1).replace(",", ".")
             try:
                 f = float(val)
                 if 0.0 <= f <= 4.0:
-                    return val
+                    last_val = val
             except ValueError:
                 pass
-    return None
+    return last_val
 
 
 def find_sinif(text):
@@ -308,6 +311,99 @@ def is_lisans_page(text):
         or ("BİLGİSAYAR MÜHENDİSLİĞİ" in up and not grad)
     )
     return undergrad and not grad
+
+
+# ── Muaf Olunan Dersler tablosu ──────────────────────────────────────────────
+_MUAF_HEADER_RE = re.compile(r"muaf\s+ol", re.IGNORECASE)
+_MUAF_SECTION_END_RE = re.compile(
+    r"durumu|kayıtlı\s+olduğu|alınan\s+dersler|not\s+döküm",
+    re.IGNORECASE,
+)
+
+
+def extract_muafiyet_courses(plumber_page):
+    """
+    'Muaf Olunan Dersler' tablosu sayfanın sol yarısında ve en üstündedir.
+    Notlar normal harf notu olarak yazılıdır; satırlarda ders kodu → not çıkarır.
+    """
+    print(f"[MUAF DEBUG] extract_muafiyet_courses cagirildi", file=sys.stderr)
+    try:
+        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=3)
+    except Exception as e:
+        print(f"[MUAF DEBUG] extract_words hatasi: {e}", file=sys.stderr)
+        return {}
+
+    print(f"[MUAF DEBUG] Toplam kelime: {len(words) if words else 0}", file=sys.stderr)
+    if not words:
+        return {}
+
+    min_x = min(w["x0"] for w in words)
+    max_x = max(w["x1"] for w in words)
+    mid_x = (min_x + max_x) / 2
+
+    left_words = sorted(
+        [w for w in words if w["x0"] < mid_x],
+        key=lambda w: w["top"],
+    )
+    if not left_words:
+        return {}
+
+    lines = []
+    for w in left_words:
+        for line in lines:
+            if abs(line["top"] - w["top"]) <= 3:
+                line["words"].append(w)
+                line["words"].sort(key=lambda x: x["x0"])
+                line["text"] = " ".join(x["text"] for x in line["words"])
+                break
+        else:
+            lines.append({"top": w["top"], "words": [w], "text": w["text"]})
+
+    muaf_start = None
+    for i, line in enumerate(lines):
+        if _MUAF_HEADER_RE.search(line["text"]):
+            muaf_start = i
+            break
+
+    print(f"[MUAF DEBUG] Sol yari satir sayisi: {len(lines)}", file=sys.stderr)
+    print(f"[MUAF DEBUG] Ilk 10 satir:", file=sys.stderr)
+    for ln in lines[:10]:
+        print(f"  top={ln['top']:.1f}  |  {ln['text']}", file=sys.stderr)
+
+    if muaf_start is None:
+        print("[MUAF DEBUG] Baslik BULUNAMADI ('muaf olunan' gecmiyor)", file=sys.stderr)
+        return {}
+
+    print(f"[MUAF DEBUG] Baslik {muaf_start}. satirda bulundu: {lines[muaf_start]['text']}", file=sys.stderr)
+
+    results = {}
+    for line in lines[muaf_start:]:
+        print(f"[MUAF DEBUG] Satir: {line['text']}", file=sys.stderr)
+        if _MUAF_SECTION_END_RE.search(line["text"]):
+            print(f"[MUAF DEBUG] Bolum sonu tetiklendi, duruyorum.", file=sys.stderr)
+            break
+
+        canonical = None
+        code_word_idx = None
+        for idx, word in enumerate(line["words"]):
+            c = map_canonical(word["text"])
+            if c:
+                canonical = c
+                code_word_idx = idx
+                break
+
+        if canonical is None:
+            continue
+
+        for word in line["words"][code_word_idx + 1:]:
+            g = clean_grade(word["text"])
+            if VALID_GRADE_RE.match(g):
+                results[canonical] = g
+                print(f"[MUAF DEBUG] Bulundu: {canonical} -> {g}", file=sys.stderr)
+                break
+
+    print(f"[MUAF DEBUG] Toplam muaf ders: {len(results)}", file=sys.stderr)
+    return results
 
 
 # ── Tablo bazlı çıkarım ──────────────────────────────────────────────────────
@@ -481,6 +577,12 @@ def parse_page(plumber_page):
     # Metin bazlı çıkarım; yalnızca tablo sonucu olmayan dersler için kullan.
     text_courses = extract_from_text(text)
     for c, g in text_courses.items():
+        if courses.get(c) is None:
+            courses[c] = g
+
+    # Muaf Olunan Dersler tablosu (sol yarı, sayfanın üstü)
+    muaf_courses = extract_muafiyet_courses(plumber_page)
+    for c, g in muaf_courses.items():
         if courses.get(c) is None:
             courses[c] = g
 

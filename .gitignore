@@ -24,3 +24,7 @@ Thumbs.db
 
 # Environment
 .env
+
+# Test / debug files
+*.txt
+*.pdf

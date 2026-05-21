@@ -72,6 +72,8 @@ const COURSE_ALIASES = {
   BİL367: ['BİL367', 'BIL367', 'CSE367'],
   BİL386: ['BİL386', 'BIL386', 'CSE386'],
   BİL493: ['BİL493', 'BIL493', 'CSE493'],
+  BİL494: ['BİL494', 'BIL494', 'CSE494'],
+  BİL498: ['BİL498', 'BIL498', 'CSE498'],
   MAT151: ['MAT151', 'MATH151'],
   MAT152: ['MAT152', 'MATH152'],
   FİZ103: ['FİZ103', 'FIZ103', 'PHYS103'],
@@ -1004,6 +1006,9 @@ function evaluateStudent(student) {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
+  const staj2CourseGrade = student.courses['BİL498'];
+  const staj2TakenAndPassed = hasPassingGrade(staj2CourseGrade);
+
   const staj2Eligible =
     staj1Eligible &&
     staj1TakenAndPassed &&
@@ -1042,6 +1047,8 @@ function evaluateStudent(student) {
     staj1TakenAndPassed,
     staj2Details,
     staj2Eligible,
+    staj2CourseGrade,
+    staj2TakenAndPassed,
     bil493BolumDetails,
     bil493BolumPassedCount,
     bil493OrtakDetails,
