@@ -35,6 +35,8 @@ COURSE_ALIASES = {
     "BİL367": ["BİL367", "BIL367", "CSE367"],
     "BİL386": ["BİL386", "BIL386", "CSE386"],
     "BİL493": ["BİL493", "BIL493", "CSE493"],
+    "BİL494": ["BİL494", "BIL494", "CSE494"],
+    "BİL498": ["BİL498", "BIL498", "CSE498"],
     "MAT151": ["MAT151", "MATH151"],
     "MAT152": ["MAT152", "MATH152"],
     "FİZ103": ["FİZ103", "FIZ103", "PHYS103"],
@@ -63,6 +65,7 @@ def norm(text):
     if not text:
         return ""
     t = str(text).replace("\r", "\n").replace("\t", " ")
+    t = t.replace("\xa6", "İ").replace("\xb2", "ı").replace("\xb3", "ü")
     t = t.replace("Bİ\u0307L", "BİL").replace("BIL", "BİL")
     t = re.sub(r" {2,}", " ", t)
     return t.strip()
@@ -87,10 +90,8 @@ def map_canonical(code):
     return None
 
 
-# Kalma notları
 FAILING_GRADES = {"F1", "F2", "XX", "F"}
 
-# Harf notu sıralaması (geçer notlar arasında karşılaştırma için)
 GRADE_ORDER = {
     "F": 0, "F1": 0, "F2": 0, "XX": 0,
     "D": 1, "D+": 2,
@@ -110,23 +111,11 @@ def is_passing(grade):
 
 
 def best_grade(existing, new):
-    """
-    İki not arasından görüntülenecek notu seçer:
-      - İkisi de geçer → daha yüksek notu al (A > B > C > D).
-      - Biri geçer biri kalan/devam (F1/F2/XX) → en son görülen (new) kazanır;
-        öğrenci dersi tekrar aldıysa ya da hâlâ devam ediyorsa güncel durum yansıtılır.
-      - İkisi de kalan/devam → en son görülen (new) kazanır.
-    """
+    """Her zaman en son görülen notu döndürür (sayfa düzeyinde soldan sağa, yukadan aşağıya)."""
     if existing is None:
         return new
     if new is None:
         return existing
-    p_ex = is_passing(existing)
-    p_new = is_passing(new)
-    if p_ex and p_new:
-        # İkisi de geçer → daha iyi notu koru
-        return new if grade_rank(new) >= grade_rank(existing) else existing
-    # Diğer tüm durumlar (geçer→kalan, kalan→geçer, kalan→kalan) → en son görülen
     return new
 
 
@@ -149,50 +138,50 @@ def find_student_no(text):
 
 
 def find_gno(text):
-    """Genel Not Ortalaması (GNO) — 0.00-4.00 arası ondalıklı sayı."""
+    """Genel Not Ortalaması (GNO) — en güncel (son) değeri döndür."""
     patterns = [
-        r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",          # önce AGNO'yu atla
         r"Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"(?<![A-Za-z])GNO\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
     ]
-    # AGNO satırlarını bul, sonra GNO ara
+    # AGNO konumlarını işaretle, GNO eşleşmelerinde bunları atla
     agno_positions = set()
     for m in re.finditer(r"AGNO\s*[:\=]?\s*\d[\.,]\d{2}", text, re.IGNORECASE):
         agno_positions.update(range(m.start(), m.end()))
 
-    for pat in patterns[1:]:  # AGNO pattern'i atla
+    last_val = None
+    for pat in patterns:
         for m in re.finditer(pat, text, re.IGNORECASE):
             if m.start() not in agno_positions:
                 val = m.group(1).replace(",", ".")
                 try:
                     f = float(val)
                     if 0.0 <= f <= 4.0:
-                        return val
+                        last_val = val
                 except ValueError:
                     pass
-    return None
+    return last_val
 
 
 def find_agno(text):
-    """Ağırlıklı Genel Not Ortalaması (AGNO)."""
+    """Ağırlıklı Genel Not Ortalaması (AGNO) — en güncel (son) değeri döndür."""
     patterns = [
         r"Ağırlıklı\s+Genel\s+Not\s+Ortalamas[ıi]\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"AGNO\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"Cumulative\s+GPA\s*[:\=]?\s*(\d[\.,]\d{2})",
         r"CGPA\s*[:\=]?\s*(\d[\.,]\d{2})",
     ]
+    last_val = None
     for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
+        for m in re.finditer(pat, text, re.IGNORECASE):
             val = m.group(1).replace(",", ".")
             try:
                 f = float(val)
                 if 0.0 <= f <= 4.0:
-                    return val
+                    last_val = val
             except ValueError:
                 pass
-    return None
+    return last_val
 
 
 def find_sinif(text):
@@ -324,6 +313,99 @@ def is_lisans_page(text):
     return undergrad and not grad
 
 
+# ── Muaf Olunan Dersler tablosu ──────────────────────────────────────────────
+_MUAF_HEADER_RE = re.compile(r"muaf\s+ol", re.IGNORECASE)
+_MUAF_SECTION_END_RE = re.compile(
+    r"durumu|kayıtlı\s+olduğu|alınan\s+dersler|not\s+döküm",
+    re.IGNORECASE,
+)
+
+
+def extract_muafiyet_courses(plumber_page):
+    """
+    'Muaf Olunan Dersler' tablosu sayfanın sol yarısında ve en üstündedir.
+    Notlar normal harf notu olarak yazılıdır; satırlarda ders kodu → not çıkarır.
+    """
+    print(f"[MUAF DEBUG] extract_muafiyet_courses cagirildi", file=sys.stderr)
+    try:
+        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=3)
+    except Exception as e:
+        print(f"[MUAF DEBUG] extract_words hatasi: {e}", file=sys.stderr)
+        return {}
+
+    print(f"[MUAF DEBUG] Toplam kelime: {len(words) if words else 0}", file=sys.stderr)
+    if not words:
+        return {}
+
+    min_x = min(w["x0"] for w in words)
+    max_x = max(w["x1"] for w in words)
+    mid_x = (min_x + max_x) / 2
+
+    left_words = sorted(
+        [w for w in words if w["x0"] < mid_x],
+        key=lambda w: w["top"],
+    )
+    if not left_words:
+        return {}
+
+    lines = []
+    for w in left_words:
+        for line in lines:
+            if abs(line["top"] - w["top"]) <= 3:
+                line["words"].append(w)
+                line["words"].sort(key=lambda x: x["x0"])
+                line["text"] = " ".join(x["text"] for x in line["words"])
+                break
+        else:
+            lines.append({"top": w["top"], "words": [w], "text": w["text"]})
+
+    muaf_start = None
+    for i, line in enumerate(lines):
+        if _MUAF_HEADER_RE.search(line["text"]):
+            muaf_start = i
+            break
+
+    print(f"[MUAF DEBUG] Sol yari satir sayisi: {len(lines)}", file=sys.stderr)
+    print(f"[MUAF DEBUG] Ilk 10 satir:", file=sys.stderr)
+    for ln in lines[:10]:
+        print(f"  top={ln['top']:.1f}  |  {ln['text']}", file=sys.stderr)
+
+    if muaf_start is None:
+        print("[MUAF DEBUG] Baslik BULUNAMADI ('muaf olunan' gecmiyor)", file=sys.stderr)
+        return {}
+
+    print(f"[MUAF DEBUG] Baslik {muaf_start}. satirda bulundu: {lines[muaf_start]['text']}", file=sys.stderr)
+
+    results = {}
+    for line in lines[muaf_start:]:
+        print(f"[MUAF DEBUG] Satir: {line['text']}", file=sys.stderr)
+        if _MUAF_SECTION_END_RE.search(line["text"]):
+            print(f"[MUAF DEBUG] Bolum sonu tetiklendi, duruyorum.", file=sys.stderr)
+            break
+
+        canonical = None
+        code_word_idx = None
+        for idx, word in enumerate(line["words"]):
+            c = map_canonical(word["text"])
+            if c:
+                canonical = c
+                code_word_idx = idx
+                break
+
+        if canonical is None:
+            continue
+
+        for word in line["words"][code_word_idx + 1:]:
+            g = clean_grade(word["text"])
+            if VALID_GRADE_RE.match(g):
+                results[canonical] = g
+                print(f"[MUAF DEBUG] Bulundu: {canonical} -> {g}", file=sys.stderr)
+                break
+
+    print(f"[MUAF DEBUG] Toplam muaf ders: {len(results)}", file=sys.stderr)
+    return results
+
+
 # ── Tablo bazlı çıkarım ──────────────────────────────────────────────────────
 def extract_from_tables(tables):
     """
@@ -355,11 +437,13 @@ def extract_from_tables(tables):
             else:
                 continue
 
+            # Satırdaki tüm hücreleri tara — break YOK.
+            # Aynı satırda birden fazla geçerli not olabilir (yatay çok-sütunlu tablo);
+            # en sağtaki (en son dönem) notun kazan ması için her hepsi güncellenir.
             for cell in search_cells:
                 g = clean_grade(cell)
                 if VALID_GRADE_RE.match(g):
-                    results[current_canonical] = best_grade(results.get(current_canonical), g)
-                    break
+                    results[current_canonical] = g
     return results
 
 
@@ -408,42 +492,71 @@ def extract_from_text(text):
 
 
 # ── Soldan sağa düzgün sıralı metin çıkarımı ────────────────────────────────
-def extract_ordered_text(plumber_page):
+def _group_words_into_lines(words, column_index, y_tolerance=3):
+    """extractor.ts groupWordsIntoLines() mantığını Python'a taşır."""
+    # y'ye göre büyükten küçüğe (pdfplumber'da top küçük = sayfanın üstü,
+    # ama extractor.ts'de y büyük = sayfanın üstü; burada top kullanıyoruz)
+    sorted_words = sorted(words, key=lambda w: (w["top"], w["x0"]))
+    lines = []  # list of {"top": float, "words": [...], "col": int}
+    for w in sorted_words:
+        matched = None
+        for line in lines:
+            if abs(line["top"] - w["top"]) <= y_tolerance:
+                matched = line
+                break
+        if matched:
+            matched["words"].append(w)
+            matched["words"].sort(key=lambda x: x["x0"])
+            # ortalama top
+            matched["top"] = sum(ww["top"] for ww in matched["words"]) / len(matched["words"])
+        else:
+            lines.append({"top": w["top"], "words": [w], "col": column_index})
+    return lines
+
+
+def extract_ordered_text(plumber_page, column_count=3, y_tolerance=3):
     """
-    extract_words() ile kelimeleri önce y (satır), sonra x (soldan sağa)
-    sırasına göre birleştirir. Çift sütunlu sayfalarda extract_text()
-    kelimeleri karıştırabilir; bu yöntem daha güvenilirdir.
+    extractor.ts buildLinesInNewspaperOrder() yaklaşımını uygular:
+      1. Sayfayı column_count eşit sütuna böler (sabit genişlik).
+      2. Her sütunun kelimelerini yukarıdan aşağıya satırlara gruplar.
+      3. Satırları (sütun, top) sırasıyla birleştirir → sol sütun önce, sağ sütun son.
+    Böylece tekrar alınan derslerde en sağ (en yeni dönem) sütunun notu
+    her zaman son işlenir ve "son görülen kazanır" kuralı doğru çalışır.
     """
     try:
-        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=3)
+        words = plumber_page.extract_words(x_tolerance=5, y_tolerance=y_tolerance)
     except Exception:
         return plumber_page.extract_text(x_tolerance=3, y_tolerance=3) or ""
 
     if not words:
         return plumber_page.extract_text(x_tolerance=3, y_tolerance=3) or ""
 
-    # Satırları y koordinatına göre grupla (5 piksel tolerans)
-    ROW_SNAP = 5
-    lines_dict = {}
-    for w in words:
-        row_key = round(w["top"] / ROW_SNAP) * ROW_SNAP
-        lines_dict.setdefault(row_key, []).append(w)
+    # Sayfa x aralığını kelime koordinatlarından hesapla (extractor.ts gibi)
+    min_x = min(w["x0"] for w in words)
+    max_x = max(w["x1"] for w in words)
+    page_width = max_x - min_x
+    col_width = page_width / column_count
 
-    ordered_lines = []
-    for row_key in sorted(lines_dict):
-        row_words = sorted(lines_dict[row_key], key=lambda w: w["x0"])
-        deduped_row = []
-        for w in row_words:
-            if (
-                deduped_row
-                and abs(deduped_row[-1]["x0"] - w["x0"]) < 3
-                and deduped_row[-1]["text"].lower() == w["text"].lower()
-            ):
-                continue  # çakışan kopya, atla
-            deduped_row.append(w)
-        ordered_lines.append(" ".join(w["text"] for w in deduped_row))
+    all_lines = []
+    for col_idx in range(column_count):
+        col_min = min_x + col_idx * col_width
+        col_max = (max_x + 1) if col_idx == column_count - 1 else (min_x + (col_idx + 1) * col_width)
+        col_words = [w for w in words if col_min <= w["x0"] < col_max]
+        if not col_words:
+            continue
+        col_lines = _group_words_into_lines(col_words, col_idx, y_tolerance)
+        all_lines.extend(col_lines)
 
-    return "\n".join(ordered_lines)
+    # (sütun, top) sırasıyla sırala → col 0 tamamen biter, sonra col 1, ...
+    all_lines.sort(key=lambda ln: (ln["col"], ln["top"]))
+
+    result_lines = []
+    for ln in all_lines:
+        text = " ".join(w["text"] for w in ln["words"]).strip()
+        if text:
+            result_lines.append(text)
+
+    return "\n".join(result_lines)
 
 
 # ── Sayfa işleme ─────────────────────────────────────────────────────────────
@@ -461,10 +574,17 @@ def parse_page(plumber_page):
     tables = plumber_page.extract_tables()
     courses = extract_from_tables(tables)
 
-    # Metin bazlı çıkarım; best_grade ile birleştir.
+    # Metin bazlı çıkarım; yalnızca tablo sonucu olmayan dersler için kullan.
     text_courses = extract_from_text(text)
     for c, g in text_courses.items():
-        courses[c] = best_grade(courses.get(c), g)
+        if courses.get(c) is None:
+            courses[c] = g
+
+    # Muaf Olunan Dersler tablosu (sol yarı, sayfanın üstü)
+    muaf_courses = extract_muafiyet_courses(plumber_page)
+    for c, g in muaf_courses.items():
+        if courses.get(c) is None:
+            courses[c] = g
 
     return {
         "studentNo": student_no,
@@ -522,7 +642,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if text_only:
-        # Sadece sayfa metinlerini dönür (Gemini için)
+        # Sadece sayfa metinlerini dönür (regex modu için fallback)
         pages_out = []
         total_pages = 0
         try:

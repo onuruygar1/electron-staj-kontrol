@@ -12,19 +12,6 @@ function getPdfParserExePath() {
   return path.join(__dirname, 'pdf_parser.exe');
 }
 
-// .env dosyasından API key yükle (dotenv gerektirmez)
-function loadEnvApiKey() {
-  try {
-    const envPath = path.join(__dirname, '.env');
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const match = line.match(/^GEMINI_API_KEY\s*=\s*(.+)$/);
-      if (match) return match[1].trim();
-    }
-  } catch {}
-  return '';
-}
-const ENV_GEMINI_API_KEY = loadEnvApiKey();
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -71,7 +58,6 @@ function gradeRank(grade) {
 }
 
 const COURSE_ALIASES = {
-  // Temel CS dersleri
   BİL101: ['BİL101', 'BIL101', 'CSE101'],
   BİL105: ['BİL105', 'BIL105', 'CSE105'],
   BİL122: ['BİL122', 'BIL122', 'CSE122'],
@@ -86,10 +72,10 @@ const COURSE_ALIASES = {
   BİL367: ['BİL367', 'BIL367', 'CSE367'],
   BİL386: ['BİL386', 'BIL386', 'CSE386'],
   BİL493: ['BİL493', 'BIL493', 'CSE493'],
-  // Matematik
+  BİL494: ['BİL494', 'BIL494', 'CSE494'],
+  BİL498: ['BİL498', 'BIL498', 'CSE498'],
   MAT151: ['MAT151', 'MATH151'],
   MAT152: ['MAT152', 'MATH152'],
-  // Fizik
   FİZ103: ['FİZ103', 'FIZ103', 'PHYS103'],
   FİZ104: ['FİZ104', 'FIZ104', 'PHYS104'],
   FİZ105: ['FİZ105', 'FIZ105', 'PHYS105'],
@@ -230,8 +216,6 @@ function extractPages(fullText) {
 function findStudentNo(pageText) {
   const text = normalizeText(pageText);
 
-  // "Öğrenci No", "Öğrenci Numarası", "Öğr. No", "Student No" vb.
-  // Ayırıcı: boşluk, ":", "-" kombinasyonları
   const patterns = [
     /Öğrenci\s+No[:\-\s]+(\d{7,10})/i,
     /Öğrenci\s+Numara[sı]+[:\-\s]+(\d{7,10})/i,
@@ -245,7 +229,6 @@ function findStudentNo(pageText) {
     if (m) return m[1];
   }
 
-  // Son çare: sayfada tek başına duran 8 haneli sayı (öğrenci no formatı)
   const allNums = [...text.matchAll(/\b(\d{8})\b/g)].map(m => m[1]);
   if (allNums.length === 1) return allNums[0];
 
@@ -255,25 +238,20 @@ function findStudentNo(pageText) {
 function findStudentName(pageText) {
   const normalized = normalizeText(pageText);
 
-  // Olası etiket varyantları: "Adı Soyadı", "Ad Soyad", "Ad / Soyad", "Name"
   const labelRe = /(?:Adı?\s*\/?)\s*Soyadı?|Ad\s+Soyad|Name\s*:/i;
 
-  // Etiketten sonra alanı bitiren kelimeler — önce \s+ zorunluluğu yok
   const stopRe = /(?:K:\s*AKTS|AKTS|K:|Bölüm|GNO|Program|Fakülte|Faculty|Dept|T\.C\.|Doğum|Mezun|Şube|Tarih)/i;
 
   const labelMatch = normalized.match(labelRe);
   if (labelMatch) {
     const afterLabel = normalized.slice(labelMatch.index + labelMatch[0].length);
-    // Baştaki tüm boşluk / iki nokta / tire karakterlerini temizle
     const afterClean = afterLabel.replace(/^[\s:\-]+/, '');
     const stopMatch = afterClean.match(stopRe);
     const raw = stopMatch ? afterClean.slice(0, stopMatch.index) : afterClean.split('\n')[0];
     const candidate = raw.split('\n')[0].trim();
-    // Rakam içeriyorsa isim değildir
     if (candidate.length >= 3 && !/\d/.test(candidate)) return candidate;
   }
 
-  // Son çare: sayfanın ilk satırlarında tamamen büyük harfli 2+ kelime grubu
   for (const line of normalized.split('\n').slice(0, 15)) {
     const trimmed = line.trim();
     if (/^[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s]{4,}$/.test(trimmed)) {
@@ -289,7 +267,6 @@ function findStudentName(pageText) {
 
 function findGno(pageText) {
   const text = normalizeText(pageText);
-  // AGNO satırlarının pozisyonlarını atla
   const agnoRe = /AGNO\s*[:\=]?\s*\d[\.,]\d{2}/gi;
   const agnoRanges = [];
   let am;
@@ -383,21 +360,14 @@ function isLisansPage(pageText) {
 function isRelevantPage(pageText) {
   const text = normalizeText(pageText).toUpperCase();
 
-  // Takip edilen 20 dersin tüm kod varyantlarını kontrol et
-  // (üst seviye BİL + MAT/FİZ + alt seviye BİL)
   const ALL_TRACKED_CODES = [
-    // BİL varyantları
     'BİL101','BİL105','BİL122','BİL124','BİL240','BİL265',
     'BİL300','BİL324','BİL332','BİL343','BİL344','BİL367','BİL386','BİL493',
-    // BIL (noktasız I) varyantları
     'BIL101','BIL105','BIL122','BIL124','BIL240','BIL265',
     'BIL300','BIL324','BIL332','BIL343','BIL344','BIL367','BIL386','BIL493',
-    // CSE varyantları
     'CSE101','CSE105','CSE122','CSE124','CSE240','CSE265',
     'CSE300','CSE324','CSE332','CSE343','CSE344','CSE367','CSE386','CSE493',
-    // MAT / MATH
     'MAT151','MAT152','MATH151','MATH152',
-    // FİZ / PHYS
     'FİZ103','FİZ104','FİZ105','FİZ110',
     'FIZ103','FIZ104','FIZ105','FIZ110',
     'PHYS103','PHYS104','PHYS105','PHYS110',
@@ -528,9 +498,6 @@ function buildEmptyCourseMap(defaultValueFactory) {
 function pickBestCandidate(candidates) {
   if (!candidates || candidates.length === 0) return null;
 
-  // Ders birden fazla alınmışsa (farklı notlar = conflict):
-  //   - Her ikisi de geçer → en yüksek notu al
-  //   - Diğer durumlar    → en son satırdaki (güncel durum)
   const uniqueGrades = new Set(candidates.map(c => c.grade));
   if (uniqueGrades.size > 1) {
     const byLine = [...candidates].sort((a, b) => b.lineIndex - a.lineIndex);
@@ -544,7 +511,6 @@ function pickBestCandidate(candidates) {
     return latest;
   }
 
-  // Tek not varsa en yüksek confidence'lı, eşit ise en son satırdaki.
   const sorted = [...candidates].sort((a, b) => {
     if (a.confidence !== b.confidence) return b.confidence - a.confidence;
     return b.lineIndex - a.lineIndex;
@@ -728,8 +694,6 @@ function normalizeNameForMatch(name) {
     .join(' ');
 }
 
-// Transkriptteki isim kelimelerinin TAMAMI liste girişindeki isimde geçiyorsa eşleşir.
-// Böylece listede önde fazladan kelime olsa da eşleşme çalışır.
 function nameWordsMatch(transcriptName, listEntryName) {
   // Türkçe karakterleri ASCII eşdeğerine indirgeyerek karşılaştır.
   // Farklı kaynaklarda İ/I, Ş/S gibi tutarsızlıklar olabileceğinden
@@ -737,7 +701,7 @@ function nameWordsMatch(transcriptName, listEntryName) {
   const normalize = s => String(s || '')
     .normalize('NFC')
     .toUpperCase()
-    .replace(/İ/g, 'I').replace(/I\u0307/g, 'I') // İ ve birleşik varyant
+    .replace(/İ/g, 'I').replace(/I\u0307/g, 'I')
     .replace(/Ş/g, 'S').replace(/Ğ/g, 'G')
     .replace(/Ö/g, 'O').replace(/Ü/g, 'U')
     .replace(/Ç/g, 'C').replace(/Â/g, 'A')
@@ -748,7 +712,6 @@ function nameWordsMatch(transcriptName, listEntryName) {
   const listWords       = normalize(listEntryName);
   if (transcriptWords.length === 0 || listWords.length === 0) return false;
 
-  // İki yönlü alt-küme kontrolü: kısa tarafın tüm kelimeleri uzun tarafta mı?
   const [shorter, longerSet] = transcriptWords.length <= listWords.length
     ? [transcriptWords, new Set(listWords)]
     : [listWords,       new Set(transcriptWords)];
@@ -756,10 +719,6 @@ function nameWordsMatch(transcriptName, listEntryName) {
   return shorter.every(w => longerSet.has(w));
 }
 
-// "Son Not Döküm Belgesi" türü PDF'ten öğrenci numaralarını ve ders bilgisini çıkarır.
-// Yaklaşım: satır satır işle → 8 haneli numarayı bul → numara sonrasındaki
-// büyük harfli Türkçe kelimeleri (≥3 harf) topla.
-// Not kodları (AA, BB, CC, XX… = 2 harf), sıra no'ları ve tarihler otomatik elenir.
 function parseStudentListFromPages(pages) {
   const studentEntries = [];
   const seenNos = new Set();
@@ -779,14 +738,11 @@ function parseStudentListFromPages(pages) {
     }
 
     for (const line of text.split('\n')) {
-      // 8 haneli öğrenci numarası içeren satır mı?
       const noMatch = line.match(/\b(\d{8})\b/);
       if (!noMatch) continue;
       const studentNo = noMatch[1];
       if (seenNos.has(studentNo)) continue;
 
-      // İsim: önce numara sonrasına bak, yoksa numara öncesine bak
-      // 2 harfli not kodları (AA/BB/CC/XX…) ve kısa token'lar bu şekilde elenir
       const afterNo  = line.slice(noMatch.index + studentNo.length);
       const beforeNo = line.slice(0, noMatch.index);
       let nameWords = [...afterNo.matchAll(/[A-ZÇĞİÖŞÜ]{3,}/g)].map(m => m[0]);
@@ -813,7 +769,6 @@ function parseStudentListFromPages(pages) {
   };
 }
 
-// Progress state for polling
 let _analyzeProgress = null;
 ipcMain.handle('get-analyze-progress', () => _analyzeProgress);
 
@@ -996,117 +951,6 @@ ipcMain.handle('pick-student-list-pdf', async () => {
   }
 });
 
-// Sayfadaki son takip edilen ders kodu konumuna göre dinamik metin penceresi döndürür.
-function getRelevantTextWindow(pageText, trailingBuffer = 800, maxChars = 25000) {
-  const normalized = normalizeText(pageText).toUpperCase();
-
-  let lastEnd = -1;
-  for (const aliases of Object.values(COURSE_ALIASES)) {
-    for (const alias of aliases) {
-      const aliasText = normalizeText(alias).toUpperCase();
-      let from = 0;
-      while (from < normalized.length) {
-        const idx = normalized.indexOf(aliasText, from);
-        if (idx === -1) break;
-        const end = idx + aliasText.length;
-        if (end > lastEnd) lastEnd = end;
-        from = end;
-      }
-    }
-  }
-
-  const cutoff = lastEnd === -1
-    ? pageText.length          // ders kodu yoksa tüm sayfa
-    : lastEnd + trailingBuffer;
-
-  return pageText.substring(0, Math.min(cutoff, maxChars));
-}
-
-async function callGeminiForStudentWithContext(pageText, apiKey, _retryCount = 0) {
-  const courseList = TRACKED_COURSES.join(', ');
-
-  const aliasLines = Object.entries(COURSE_ALIASES)
-    .filter(([canonical, aliases]) => aliases.length > 1)
-    .map(([canonical, aliases]) => `  ${canonical} = ${aliases.join(' = ')}`)
-    .join('\n');
-
-  const prompt =
-    `Türk üniversitesi transkriptinden ders notlarını oku ve JSON olarak döndür.\n\n` +
-    `Takip edilecek dersler: ${courseList}\n\n` +
-    `Ders kodu eşdeğerlikleri (transkriptte farklı kodla geçebilir):\n${aliasLines}\n\n` +
-    `Kurallar:\n` +
-    `- Her ders için transkriptten doğrudan notu oku; transkriptte eşdeğer kod varsa onu kullan\n` +
-    `- Ders birden fazla alınmışsa EN SON alınan notu kullan\n` +
-    `- Geçerli notlar: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, F, XX, Y, P\n` +
-    `- Ders transkriptte yoksa null döndür\n` +
-    `- JSON key olarak her zaman sol taraftaki kanonik kodu kullan (örn: BİL343)\n` +
-    `- "studentName" alanına transkript başlığındaki öğrencinin adı soyadını büyük harflerle yaz (örn: "HATİCE SILA AKMAN"), bulamazsan null\n` +
-    `- SADECE JSON döndür\n\n` +
-    `Transkript:\n${getRelevantTextWindow(pageText)}`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-  let response;
-  try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 1024,
-            thinkingConfig: { thinkingBudget: 0 }
-          }
-        })
-      }
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    if (response.status === 429) {
-      if (_retryCount >= 3) throw new Error('Gemini rate limit: 3 denemede 429 alındı, atlanıyor');
-      const base = parseInt(response.headers.get('Retry-After') || '30', 10) * 1000;
-      const jitter = Math.random() * 10000;
-      const waitMs = Math.min(base + jitter, 90000);
-      _analyzeProgress = { ..._analyzeProgress, rateLimited: true, waitUntil: Date.now() + waitMs };
-      await new Promise(r => setTimeout(r, waitMs));
-      _analyzeProgress = { ..._analyzeProgress, rateLimited: false };
-      return callGeminiForStudentWithContext(pageText, apiKey, _retryCount + 1);
-    }
-    throw new Error(`Gemini API ${response.status}: ${errBody.slice(0, 200)}`);
-  }
-
-  const data = await response.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error(`Gemini boş yanıt (${data.candidates?.[0]?.finishReason || '?'})`);
-  }
-
-  const promptTokens = data.usageMetadata?.promptTokenCount     || 0;
-  const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
-
-  const parsed = JSON.parse(rawText);
-  const courses = {};
-  for (const course of TRACKED_COURSES) courses[course] = null;
-  let studentName = null;
-  for (const [key, value] of Object.entries(parsed)) {
-    if (key === 'studentName') {
-      studentName = value ? String(value).trim() : null;
-      continue;
-    }
-    const canonical = mapCanonicalCourse(key) || (TRACKED_COURSES.includes(key) ? key : null);
-    if (canonical) courses[canonical] = value ? cleanGradeToken(String(value)) : null;
-  }
-  return { courses, studentName, promptTokens, outputTokens };
-}
 
 function buildParseSummary(students) {
   const summary = {
@@ -1241,6 +1085,9 @@ function evaluateStudent(student, requirements = DEFAULT_REQUIREMENTS) {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
+  const staj2CourseGrade = student.courses['BİL498'];
+  const staj2TakenAndPassed = hasPassingGrade(staj2CourseGrade);
+
   const staj2Eligible =
     staj1Eligible &&
     staj1TakenAndPassed &&
@@ -1280,6 +1127,8 @@ function evaluateStudent(student, requirements = DEFAULT_REQUIREMENTS) {
     staj1TakenAndPassed,
     staj2Details,
     staj2Eligible,
+    staj2CourseGrade,
+    staj2TakenAndPassed,
     bil493BolumDetails,
     bil493BolumPassedCount,
     bil493BolumTotal: requirements.bil493Bolum.length,
@@ -1440,7 +1289,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       };
     }
 
-    // ── Mevcut regex / Gemini modu ──────────────────────────────────────────────────────────────
+    // ── Regex modu (pdf_parser.exe yoksa fallback) ──────────────────────────────────────────────
     let pages, totalPages;
     const exePath = getPdfParserExePath();
     if (fs.existsSync(exePath)) {
@@ -1484,59 +1333,8 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       return true;
     });
 
-    const apiKey = (typeof options.apiKey === 'string' ? options.apiKey.trim() : '') || ENV_GEMINI_API_KEY;
-
     const parseResults = [];
-    let totalPromptTokens = 0;
-    let totalOutputTokens = 0;
-
-    if (apiKey) {
-      // Önce tüm öğrenciler için regex parser çalıştır
-      const regexResults = relevantPages.map(parseStudentPage);
-      const total = regexResults.length;
-      let doneCount = 0;
-
-      _analyzeProgress = { phase: 'gemini-start', done: 0, total };
-
-      // 5'li gruplar halinde paralel Gemini doğrulaması — her öğrenci bitince progress gönder
-      const CONCURRENCY = 5;
-      for (let i = 0; i < regexResults.length; i += CONCURRENCY) {
-        const chunk = regexResults.slice(i, i + CONCURRENCY);
-        const chunkPages = relevantPages.slice(i, i + CONCURRENCY);
-
-        const chunkResults = await Promise.all(
-          chunk.map(async (regexResult, idx) => {
-            let result;
-            try {
-              const { courses, studentName, promptTokens, outputTokens } = await callGeminiForStudentWithContext(
-                chunkPages[idx], apiKey
-              );
-              totalPromptTokens += promptTokens;
-              totalOutputTokens += outputTokens;
-              // Gemini sadece GEMINI_COURSES'u doğrular; MAT/FİZ/BİL101-124 için regex değerini koru
-              const mergedCourses = { ...regexResult.courses };
-              for (const c of TRACKED_COURSES) mergedCourses[c] = courses[c];
-              result = {
-                ...regexResult,
-                studentName: studentName || regexResult.studentName,
-                courses: mergedCourses,
-                parseDiagnostics: { geminiUsed: true, averageConfidence: 1.0, lowConfidenceCourses: [], courses: {} }
-              };
-            } catch (err) {
-              console.warn(`Gemini hatası (${regexResult.studentNo}): ${err.message} — regex kullanılıyor`);
-              result = regexResult;
-            }
-            doneCount++;
-            _analyzeProgress = { phase: 'gemini', done: doneCount, total };
-            console.log(`Gemini: ${doneCount}/${total} — ${result.studentName || result.studentNo}`);
-            return result;
-          })
-        );
-        parseResults.push(...chunkResults);
-      }
-    } else {
-      for (const page of relevantPages) parseResults.push(parseStudentPage(page));
-    }
+    for (const page of relevantPages) parseResults.push(parseStudentPage(page));
 
     const students = parseResults
       .map(s => evaluateStudent(s, requirements))
@@ -1560,11 +1358,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       inList: !filterEntries || filterEntries.some(e => studentMatches(s, e))
     }));
 
-    const estimatedCostUSD =
-      (totalPromptTokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_1M +
-      (totalOutputTokens / 1_000_000) * GEMINI_OUTPUT_PRICE_PER_1M;
-
-    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${studentsTagged.length}${apiKey ? ` | Gemini kullanıldı | ${totalPromptTokens}p + ${totalOutputTokens}o token | ~$${estimatedCostUSD.toFixed(4)}` : ''}`);
+    console.log(`Toplam sayfa: ${totalPages} | Öğrenci sayfası: ${relevantPages.length} | Öğrenci: ${studentsTagged.length}`);
 
     const parseSummary = buildParseSummary(studentsTagged);
 
@@ -1574,9 +1368,9 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       totalPages,
       totalStudents: studentsTagged.length,
       parseSummary,
-      geminiUsed: Boolean(apiKey),
+      geminiUsed: false,
       pdfplumberUsed: false,
-      tokenStats: apiKey ? { totalPromptTokens, totalOutputTokens, estimatedCostUSD } : null,
+      tokenStats: null,
       missingStudents,
       students: studentsTagged
     };
