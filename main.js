@@ -1186,7 +1186,7 @@ async function extractPagesFromPdfTextLayer(buffer) {
 }
 
 // ── pdfplumber subprocess yardımcısı ────────────────────────────────────────────────────────────────
-function runPdfplumber(filePath) {
+function runPdfplumber(filePath, extraCourses = []) {
   return new Promise((resolve, reject) => {
     const exePath = getPdfParserExePath();
     if (!fs.existsSync(exePath)) {
@@ -1194,9 +1194,13 @@ function runPdfplumber(filePath) {
         'pdf_parser.exe bulunamadı. Lütfen önce build_parser.bat dosyasını çalıştırın.'
       ));
     }
+    const args = [filePath];
+    if (extraCourses.length > 0) {
+      args.push(`--extra-courses=${extraCourses.join(',')}`);
+    }
     execFile(
       exePath,
-      [filePath],
+      args,
       { maxBuffer: 50 * 1024 * 1024, encoding: 'buffer', timeout: 120000 },
       (err, stdout, _stderr) => {
         if (err) return reject(new Error(`pdfplumber hatası: ${err.message}`));
@@ -1230,7 +1234,12 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
     // ── pdfplumber modu ────────────────────────────────────────────────────────────────
     if (options.mode === 'pdfplumber') {
       _analyzeProgress = { phase: 'pdfplumber', filePath };
-      const plumberData = await runPdfplumber(filePath);
+      const extraCourses = [
+        ...(requirements.staj1       || []),
+        ...(requirements.staj2       || []),
+        ...(requirements.bil493Bolum || []),
+      ];
+      const plumberData = await runPdfplumber(filePath, extraCourses);
 
       const filterEntries =
         Array.isArray(options.filterStudentEntries) && options.filterStudentEntries.length > 0

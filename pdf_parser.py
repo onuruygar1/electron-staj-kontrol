@@ -619,6 +619,29 @@ def parse_pdf(pdf_path):
     return {"students": students, "totalPages": total_pages}
 
 
+def _expand_aliases(code):
+    """Verilen kanonik kod için standart prefix varyantlarını üretir."""
+    aliases = [code]
+    ascii_code = code.replace("\u0130", "I")
+    if ascii_code != code:
+        aliases.append(ascii_code)
+    prefixes = [
+        (["B\u0130L", "BIL", "CSE"], ["B\u0130L", "BIL", "CSE"]),
+        (["MAT", "MATH"],             ["MAT", "MATH"]),
+        (["F\u0130Z", "FIZ", "PHYS"], ["F\u0130Z", "FIZ", "PHYS"]),
+    ]
+    for src_prefixes, all_prefixes in prefixes:
+        for sp in src_prefixes:
+            if code.startswith(sp):
+                num = code[len(sp):]
+                for p in all_prefixes:
+                    alias = p + num
+                    if alias not in aliases:
+                        aliases.append(alias)
+                return aliases
+    return aliases
+
+
 # ── Giriş noktası ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -634,6 +657,20 @@ if __name__ == "__main__":
         sys.stdout.buffer.write(out.encode("utf-8"))
         sys.exit(1)
     pdf_path = positional[0]
+
+    # --extra-courses=BIL999,MAT123,... calisma zamaninda TRACKED_COURSES'a ekle
+    for arg in sys.argv[1:]:
+        if arg.startswith("--extra-courses="):
+            raw_codes = arg.split("=", 1)[1].split(",")
+            for raw in raw_codes:
+                code = norm_code(raw)
+                if not code or code in COURSE_ALIASES:
+                    continue
+                aliases = _expand_aliases(code)
+                COURSE_ALIASES[code] = aliases
+                TRACKED_COURSES.append(code)
+            break
+
     if not os.path.exists(pdf_path):
         out = json.dumps(
             {"error": f"Dosya bulunamadı: {pdf_path}"}, ensure_ascii=False

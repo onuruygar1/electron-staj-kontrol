@@ -3,7 +3,9 @@ const DEFAULT_REQUIREMENTS = {
   staj1: ['BİL240', 'BİL265'],
   staj2: ['BİL343', 'BİL367', 'BİL344', 'BİL386'],
   bil493Bolum: ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'],
-  bil493BolumMin: 4
+  bil493BolumMin: 4,
+  bil493Ortak: ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
+                'BİL101', 'BİL105', 'BİL122', 'BİL124']
 };
 
 function normalizeCourseCode(raw) {
@@ -24,10 +26,17 @@ function loadRequirements() {
       staj1: cleanArr(parsed.staj1, DEFAULT_REQUIREMENTS.staj1),
       staj2: cleanArr(parsed.staj2, DEFAULT_REQUIREMENTS.staj2),
       bil493Bolum: cleanArr(parsed.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum),
-      bil493BolumMin: Number.isFinite(parsed.bil493BolumMin) ? Math.max(0, Math.floor(parsed.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin
+      bil493BolumMin: Number.isFinite(parsed.bil493BolumMin) ? Math.max(0, Math.floor(parsed.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin,
+      bil493Ortak: cleanArr(parsed.bil493Ortak, DEFAULT_REQUIREMENTS.bil493Ortak)
     };
   } catch {
-    return { ...DEFAULT_REQUIREMENTS, staj1: [...DEFAULT_REQUIREMENTS.staj1], staj2: [...DEFAULT_REQUIREMENTS.staj2], bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum] };
+    return {
+      staj1: [...DEFAULT_REQUIREMENTS.staj1],
+      staj2: [...DEFAULT_REQUIREMENTS.staj2],
+      bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum],
+      bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
+      bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak]
+    };
   }
 }
 
@@ -60,7 +69,9 @@ function reEvaluateStudent(student) {
   const bil493BolumPassedCount = bil493BolumDetails.filter(i => i.passed).length;
   const bil493BolumMin = Math.min(requirements.bil493BolumMin, requirements.bil493Bolum.length);
 
-  const bil493OrtakDetails = student.bil493OrtakDetails || [];
+  const bil493OrtakDetails = requirements.bil493Ortak.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
   const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
   const bil493Eligible = bil493BolumPassedCount >= bil493BolumMin && bil493OrtakAllPassed;
 
@@ -117,11 +128,15 @@ function renderChipList(containerId, list, onRemove) {
 
 function renderSettings() {
   renderChipList('chipsBil493', requirements.bil493Bolum, (idx) => {
-    const removed = requirements.bil493Bolum[idx];
     requirements.bil493Bolum.splice(idx, 1);
     if (requirements.bil493BolumMin > requirements.bil493Bolum.length) {
       requirements.bil493BolumMin = requirements.bil493Bolum.length;
     }
+    saveRequirements();
+    renderSettings();
+  });
+  renderChipList('chipsOrtakBil493', requirements.bil493Ortak, (idx) => {
+    requirements.bil493Ortak.splice(idx, 1);
     saveRequirements();
     renderSettings();
   });
@@ -188,12 +203,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* ── Settings actions ── */
-document.getElementById('addBil493Btn')?.addEventListener('click', () => addCourseTo('bil493Bolum', 'inputBil493'));
-document.getElementById('addStaj1Btn') ?.addEventListener('click', () => addCourseTo('staj1', 'inputStaj1'));
-document.getElementById('addStaj2Btn') ?.addEventListener('click', () => addCourseTo('staj2', 'inputStaj2'));
+document.getElementById('addBil493Btn')    ?.addEventListener('click', () => addCourseTo('bil493Bolum', 'inputBil493'));
+document.getElementById('addOrtakBil493Btn')?.addEventListener('click', () => addCourseTo('bil493Ortak', 'inputOrtakBil493'));
+document.getElementById('addStaj1Btn')     ?.addEventListener('click', () => addCourseTo('staj1', 'inputStaj1'));
+document.getElementById('addStaj2Btn')     ?.addEventListener('click', () => addCourseTo('staj2', 'inputStaj2'));
 
-['inputBil493', 'inputStaj1', 'inputStaj2'].forEach((id, i) => {
-  const keys = ['bil493Bolum', 'staj1', 'staj2'];
+['inputBil493', 'inputOrtakBil493', 'inputStaj1', 'inputStaj2'].forEach((id, i) => {
+  const keys = ['bil493Bolum', 'bil493Ortak', 'staj1', 'staj2'];
   document.getElementById(id)?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addCourseTo(keys[i], id);
   });
@@ -213,7 +229,8 @@ document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
     staj1: [...DEFAULT_REQUIREMENTS.staj1],
     staj2: [...DEFAULT_REQUIREMENTS.staj2],
     bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum],
-    bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin
+    bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
+    bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak]
   };
   saveRequirements();
   renderSettings();
@@ -361,22 +378,51 @@ function renderStudent(student) {
     ? '<div class="unlisted-badge">⚠ Listede Yok</div>'
     : '';
 
-  const bil493Total = student.bil493BolumTotal ?? student.bil493BolumDetails.length;
-  const bil493Min   = student.bil493BolumMin   ?? 4;
-  const bil493Summary = student.bil493Eligible
-    ? `${student.bil493BolumPassedCount}/${bil493Total} bölüm geçildi, tüm ortak dersler ✔`
+  // Always compute pass/fail from the CURRENT requirements + student grades
+  const c = student.courses || {};
+
+  const staj1Details = requirements.staj1.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const staj1Eligible = staj1Details.every(i => i.passed);
+  const staj1CourseGrade = c['BİL300'];
+  const staj1TakenAndPassed = clientHasPassingGrade(staj1CourseGrade);
+
+  const staj2Details = requirements.staj2.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2Details.every(i => i.passed);
+
+  const bil493BolumDetails = requirements.bil493Bolum.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const bil493BolumPassedCount = bil493BolumDetails.filter(i => i.passed).length;
+  const bil493Total = bil493BolumDetails.length;
+  const bil493Min = Math.min(requirements.bil493BolumMin, bil493Total);
+
+  const bil493OrtakDetails = requirements.bil493Ortak.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
+  const bil493Eligible = bil493BolumPassedCount >= bil493Min && bil493OrtakAllPassed;
+
+  const bil493AlreadyPassed = clientHasPassingGrade(c['BİL493']);
+  const bil494Eligible = bil493AlreadyPassed;
+
+  const bil493Summary = bil493Eligible
+    ? `${bil493BolumPassedCount}/${bil493Total} bölüm geçildi, tüm ortak dersler ✔`
     : [
-        `${student.bil493BolumPassedCount}/${bil493Total} bölüm geçildi (min. ${bil493Min})`,
-        student.bil493OrtakAllPassed ? null : 'ortak dersler eksik'
+        `${bil493BolumPassedCount}/${bil493Total} bölüm geçildi (min. ${bil493Min})`,
+        bil493OrtakAllPassed ? null : 'ortak dersler eksik'
       ].filter(Boolean).join(' · ');
 
   const rows = [
-    ...student.staj1Details.map(i => ({ sec: 's1',    label: 'Staj I',         code: i.code,            grade: i.grade,                    passed: i.passed })),
-    {                                   sec: 'pre',   label: 'Ön Koşul',       code: 'BİL300 (Staj I)', grade: student.staj1CourseGrade,   passed: student.staj1TakenAndPassed },
-    ...student.staj2Details.map(i => ({ sec: 's2',    label: 'Staj II',        code: i.code,            grade: i.grade,                    passed: i.passed })),
-    ...student.bil493BolumDetails.map(i => ({ sec: 'b493', label: 'BİL493 Bölüm', code: i.code, grade: i.grade, passed: i.passed })),
-    ...student.bil493OrtakDetails.map(i => ({ sec: 'b493o', label: 'BİL493 Ortak', code: i.code, grade: i.grade, passed: i.passed })),
-    { sec: 'b494', label: 'BİL494 Ön Koşul', code: 'BİL493 (tamamlandı mı?)', grade: student.courses?.['BİL493'], passed: student.bil493AlreadyPassed },
+    ...staj1Details.map(i => ({ sec: 's1',    label: 'Staj I',         code: i.code, grade: i.grade, passed: i.passed })),
+    {                          sec: 'pre',    label: 'Ön Koşul',       code: 'BİL300 (Staj I)', grade: staj1CourseGrade, passed: staj1TakenAndPassed },
+    ...staj2Details.map(i => ({ sec: 's2',    label: 'Staj II',        code: i.code, grade: i.grade, passed: i.passed })),
+    ...bil493BolumDetails.map(i => ({ sec: 'b493',  label: 'BİL493 Bölüm', code: i.code, grade: i.grade, passed: i.passed })),
+    ...bil493OrtakDetails.map(i => ({ sec: 'b493o', label: 'BİL493 Ortak', code: i.code, grade: i.grade, passed: i.passed })),
+    { sec: 'b494', label: 'BİL494 Ön Koşul', code: 'BİL493 (tamamlandı mı?)', grade: c['BİL493'], passed: bil493AlreadyPassed },
   ];
 
   return `
@@ -390,10 +436,10 @@ function renderStudent(student) {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
           <div class="pills">
-            <span class="pill ${student.staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
-            <span class="pill ${student.staj2Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.staj2Eligible ? 'Staj II Alabilir' : 'Staj II Alamaz'}</span>
-            <span class="pill ${student.bil493Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil493Eligible ? 'BİL493 Alabilir' : 'BİL493 Alamaz'}</span>
-            <span class="pill ${student.bil494Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${student.bil494Eligible ? 'BİL494 Alabilir' : 'BİL494 Alamaz'}</span>
+            <span class="pill ${staj1Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${staj1Eligible ? 'Staj I Alabilir' : 'Staj I Alamaz'}</span>
+            <span class="pill ${staj2Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${staj2Eligible ? 'Staj II Alabilir' : 'Staj II Alamaz'}</span>
+            <span class="pill ${bil493Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${bil493Eligible ? 'BİL493 Alabilir' : 'BİL493 Alamaz'}</span>
+            <span class="pill ${bil494Eligible ? 'ok' : 'bad'}"><span class="pill-dot"></span>${bil494Eligible ? 'BİL494 Alabilir' : 'BİL494 Alamaz'}</span>
           </div>
           <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
             ${student.gno   ? `<span class="gno-badge">GNO ${student.gno}</span>` : ''}
