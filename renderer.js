@@ -201,12 +201,6 @@ function renderSettings() {
   const minS2 = document.getElementById('minCountStaj2');
   if (minS2) { minS2.max = String(totalS2); minS2.value = String(Math.min(requirements.staj2Min, totalS2)); }
 
-  const inS1C = document.getElementById('inputCourseStaj1');
-  if (inS1C) inS1C.placeholder = requirements.staj1Course;
-  const inS2C = document.getElementById('inputCourseStaj2');
-  if (inS2C) inS2C.placeholder = requirements.staj2Course;
-  const inB4P = document.getElementById('inputCourseBil494');
-  if (inB4P) inB4P.placeholder = requirements.bil494Prereq;
 }
 
 function addCourseTo(listKey, inputId) {
@@ -237,29 +231,6 @@ function addCourseTo(listKey, inputId) {
   input.focus();
 }
 
-function setSingleCourse(key, inputId) {
-  const input = document.getElementById(inputId);
-  const errEl = document.getElementById(inputId + 'Err');
-  const showErr = (msg) => {
-    if (errEl) {
-      errEl.textContent = msg;
-      clearTimeout(showErr._t);
-      showErr._t = setTimeout(() => { errEl.textContent = ''; }, 2500);
-    }
-    input.focus();
-  };
-  const code = normalizeCourseCode(input.value);
-  if (!code || !/^[A-ZÇĞİÖŞÜ]{2,5}\d{2,4}$/.test(code)) {
-    showErr('Geçersiz ders kodu. Örnek: BİL300, BİL498');
-    return;
-  }
-  requirements[key] = code;
-  saveRequirements();
-  renderSettings();
-  input.value = '';
-  input.focus();
-}
-
 /* ── Tab navigation ── */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -277,19 +248,10 @@ document.getElementById('addBil493Btn')    ?.addEventListener('click', () => add
 document.getElementById('addOrtakBil493Btn')?.addEventListener('click', () => addCourseTo('bil493Ortak', 'inputOrtakBil493'));
 document.getElementById('addStaj1Btn')     ?.addEventListener('click', () => addCourseTo('staj1', 'inputStaj1'));
 document.getElementById('addStaj2Btn')     ?.addEventListener('click', () => addCourseTo('staj2', 'inputStaj2'));
-document.getElementById('setCourseStaj1Btn')?.addEventListener('click', () => setSingleCourse('staj1Course', 'inputCourseStaj1'));
-document.getElementById('setCourseStaj2Btn')?.addEventListener('click', () => setSingleCourse('staj2Course', 'inputCourseStaj2'));
-document.getElementById('setCourseBil494Btn')?.addEventListener('click', () => setSingleCourse('bil494Prereq', 'inputCourseBil494'));
-
 ['inputBil493', 'inputOrtakBil493', 'inputStaj1', 'inputStaj2'].forEach((id, i) => {
   const keys = ['bil493Bolum', 'bil493Ortak', 'staj1', 'staj2'];
   document.getElementById(id)?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addCourseTo(keys[i], id);
-  });
-});
-[['inputCourseStaj1', 'staj1Course'], ['inputCourseStaj2', 'staj2Course'], ['inputCourseBil494', 'bil494Prereq']].forEach(([id, key]) => {
-  document.getElementById(id)?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') setSingleCourse(key, id);
   });
 });
 
