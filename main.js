@@ -94,7 +94,7 @@ const DEFAULT_REQUIREMENTS = {
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
 
 // Kullanıcı kendi koşul listesine bir ders eklediğinde, kanonik koda göre
-// otomatik alias üretip TRACKED_COURSES'a dahil ederiz; böylece parser/Gemini
+// otomatik alias üretip TRACKED_COURSES'a dahil ederiz; böylece parser
 // o dersin notunu da çıkarmaya çalışır.
 function ensureCourseRegistered(rawCode) {
   if (!rawCode) return null;
@@ -158,19 +158,6 @@ function buildRequirements(input) {
   };
 }
 
-// Gemini'ye sadece karıştırılabilecek staj/bölüm dersleri gönderilir;
-// MAT/FİZ/BİL101-124 regex ile zaten doğru okunuyor, prompt boyutunu küçültmek için dışarıda bırakılır.
-const GEMINI_COURSES = [
-  'BİL240', 'BİL265', 'BİL300',
-  'BİL324', 'BİL332',
-  'BİL343', 'BİL344', 'BİL367', 'BİL386',
-  'BİL493',
-  'MAT151', 'MAT152'
-];
-
-// Gemini 2.5 Flash fiyatlandırması ($/1M token, Mayıs 2026)
-const GEMINI_INPUT_PRICE_PER_1M  = 0.075;
-const GEMINI_OUTPUT_PRICE_PER_1M = 0.300;
 
 const GRADE_REGEX = /(?<![A-Z0-9])(A\s*[+\-]|A|B\s*[+\-]|B|C\s*[+\-]|C|D\s*\+|D|F\s*[12]|X\s*X|Y|P)(?![A-Z0-9])/g;
 
@@ -951,6 +938,16 @@ ipcMain.handle('pick-student-list-pdf', async () => {
   }
 });
 
+ipcMain.handle('pick-transcript-pdf', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Transkript PDF seç',
+    properties: ['openFile'],
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
 
 function buildParseSummary(students) {
   const summary = {
@@ -1218,17 +1215,16 @@ function runPdfplumber(filePath) {
 
 ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
   try {
-    const result = await dialog.showOpenDialog({
-      title: 'Transkript PDF seç',
-      properties: ['openFile'],
-      filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return { canceled: true };
+    let filePath = options.filePath || null;
+    if (!filePath) {
+      const result = await dialog.showOpenDialog({
+        title: 'Transkript PDF seç',
+        properties: ['openFile'],
+        filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+      });
+      if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+      filePath = result.filePaths[0];
     }
-
-    const filePath = result.filePaths[0];
     const requirements = buildRequirements(options.requirementsConfig);
 
     // ── pdfplumber modu ────────────────────────────────────────────────────────────────
@@ -1281,7 +1277,6 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
         totalPages: plumberData.totalPages || 0,
         totalStudents: studentsTagged.length,
         parseSummary,
-        geminiUsed: false,
         pdfplumberUsed: true,
         tokenStats: null,
         missingStudents,
@@ -1368,7 +1363,6 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       totalPages,
       totalStudents: studentsTagged.length,
       parseSummary,
-      geminiUsed: false,
       pdfplumberUsed: false,
       tokenStats: null,
       missingStudents,

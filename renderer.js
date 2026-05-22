@@ -33,6 +33,60 @@ function loadRequirements() {
 
 let requirements = loadRequirements();
 
+const PASSING_GRADES_SET = new Set(['D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+']);
+function clientHasPassingGrade(grade) {
+  if (!grade) return false;
+  return PASSING_GRADES_SET.has(String(grade).toUpperCase().replace(/\s+/g, '').trim());
+}
+
+function reEvaluateStudent(student) {
+  const c = student.courses || {};
+
+  const staj1Details = requirements.staj1.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const staj1Eligible = staj1Details.every(i => i.passed);
+  const staj1CourseGrade = c['BİL300'];
+  const staj1TakenAndPassed = clientHasPassingGrade(staj1CourseGrade);
+
+  const staj2Details = requirements.staj2.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2Details.every(i => i.passed);
+
+  const bil493BolumDetails = requirements.bil493Bolum.map(code => ({
+    code, grade: c[code], passed: clientHasPassingGrade(c[code])
+  }));
+  const bil493BolumPassedCount = bil493BolumDetails.filter(i => i.passed).length;
+  const bil493BolumMin = Math.min(requirements.bil493BolumMin, requirements.bil493Bolum.length);
+
+  const bil493OrtakDetails = student.bil493OrtakDetails || [];
+  const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
+  const bil493Eligible = bil493BolumPassedCount >= bil493BolumMin && bil493OrtakAllPassed;
+
+  const bil493AlreadyPassed = clientHasPassingGrade(c['BİL493']);
+  const bil494Eligible = bil493AlreadyPassed;
+
+  return {
+    ...student,
+    staj1Details,
+    staj1Eligible,
+    staj1CourseGrade,
+    staj1TakenAndPassed,
+    staj2Details,
+    staj2Eligible,
+    bil493BolumDetails,
+    bil493BolumPassedCount,
+    bil493BolumTotal: requirements.bil493Bolum.length,
+    bil493BolumMin,
+    bil493OrtakDetails,
+    bil493OrtakAllPassed,
+    bil493Eligible,
+    bil493AlreadyPassed,
+    bil494Eligible,
+  };
+}
+
 function saveRequirements() {
   localStorage.setItem('requirementsConfig', JSON.stringify(requirements));
   const toast = document.getElementById('settingsToast');
@@ -40,6 +94,10 @@ function saveRequirements() {
     toast.classList.add('show');
     clearTimeout(saveRequirements._t);
     saveRequirements._t = setTimeout(() => toast.classList.remove('show'), 1200);
+  }
+  if (allStudents.length > 0) {
+    allStudents = allStudents.map(reEvaluateStudent);
+    applyFilters();
   }
 }
 
@@ -91,14 +149,23 @@ function renderSettings() {
 
 function addCourseTo(listKey, inputId) {
   const input = document.getElementById(inputId);
+  const errEl = document.getElementById(inputId + 'Err');
+  const showErr = (msg) => {
+    if (errEl) {
+      errEl.textContent = msg;
+      clearTimeout(showErr._t);
+      showErr._t = setTimeout(() => { errEl.textContent = ''; }, 2500);
+    }
+    input.focus();
+  };
   const code = normalizeCourseCode(input.value);
   if (!code) return;
   if (!/^[A-ZÇĞİÖŞÜ]{2,5}\d{2,4}$/.test(code)) {
-    alert('Geçersiz ders kodu. Örnek: BİL324, MAT151');
+    showErr('Geçersiz ders kodu. Örnek: BİL324, MAT151');
     return;
   }
   if (requirements[listKey].includes(code)) {
-    alert(`${code} zaten listede.`);
+    showErr(`${code} zaten listede.`);
     return;
   }
   requirements[listKey].push(code);
@@ -153,6 +220,7 @@ document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
 });
 
 const analyzeBtn   = document.getElementById('analyzeBtn');
+const selectPdfBtn = document.getElementById('selectPdfBtn');
 const listBtn      = document.getElementById('listBtn');
 const listStatusEl = document.getElementById('listStatus');
 const listStatusTx = document.getElementById('listStatusText');
@@ -169,6 +237,11 @@ let allStudents      = [];
 let missingStudents  = [];
 let activeFilter     = 'all'; // 'all'|'staj1'|'staj2'|'bil493'|'bil494'|'unlisted'
 let studentListData  = null;
+let selectedPdfPath  = null;
+
+function updateAnalyzeBtn() {
+  if (analyzeBtn) analyzeBtn.disabled = !selectedPdfPath;
+}
 
 /* ── Dark mode ── */
 const themeToggleBtn = document.getElementById('themeToggle');
@@ -199,7 +272,6 @@ listBtn.addEventListener('click', async () => {
       : '';
     listStatusTx.textContent = `${data.totalFound} öğrenci yüklendi${courseLabel ? ' · ' + courseLabel : ''}`;
     listStatusEl.style.display = 'flex';
-    analyzeBtn.disabled = false;
   } catch (err) {
     alert('Liste yüklenemedi: ' + err.message);
   } finally {
@@ -211,7 +283,35 @@ listClearBtn.addEventListener('click', () => {
   studentListData = null;
   listStatusEl.style.display = 'none';
   listStatusTx.textContent = '';
-  analyzeBtn.disabled = true;
+});
+
+/* ── Transkript PDF seç ── */
+if (selectPdfBtn) {
+  selectPdfBtn.addEventListener('click', async () => {
+    selectPdfBtn.disabled = true;
+    try {
+      const result = await window.electronAPI.pickTranscriptPdf();
+      if (result.canceled) return;
+      selectedPdfPath = result.filePath;
+      const fileName = result.filePath.split(/[\\/]/).pop();
+      const statusEl = document.getElementById('pdfFileStatus');
+      const textEl   = document.getElementById('pdfFileStatusText');
+      if (textEl) textEl.textContent = fileName;
+      if (statusEl) statusEl.style.display = 'flex';
+      updateAnalyzeBtn();
+    } catch (err) {
+      alert('PDF seçilemedi: ' + err.message);
+    } finally {
+      selectPdfBtn.disabled = false;
+    }
+  });
+}
+
+document.getElementById('clearPdfBtn')?.addEventListener('click', () => {
+  selectedPdfPath = null;
+  const statusEl = document.getElementById('pdfFileStatus');
+  if (statusEl) statusEl.style.display = 'none';
+  updateAnalyzeBtn();
 });
 
 /* ── Helpers ── */
@@ -416,7 +516,7 @@ searchEl.addEventListener('input', applyFilters);
 
 /* ── PDF analyze ── */
 analyzeBtn.addEventListener('click', async () => {
-  if (!studentListData) return;
+  if (!selectedPdfPath) return;
   analyzeBtn.disabled = true;
   summaryEl.innerHTML = '<div class="msg">⏳ PDF okunuyor, lütfen bekleyin…</div>';
   resultsEl.innerHTML = '';
@@ -430,9 +530,7 @@ analyzeBtn.addEventListener('click', async () => {
 
   startPolling();
   try {
-    const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
-    const analyzeOptions = { mode: activeMode, requirementsConfig: requirements };
-    if (activeMode === 'gemini' && apiKey) analyzeOptions.apiKey = apiKey;
+    const analyzeOptions = { mode: 'pdfplumber', requirementsConfig: requirements, filePath: selectedPdfPath };
     if (studentListData) analyzeOptions.filterStudentEntries = studentListData.studentEntries;
     const data = await window.electronAPI.pickPdfAndAnalyze(analyzeOptions);
     stopPolling();
@@ -511,7 +609,7 @@ analyzeBtn.addEventListener('click', async () => {
     stopPolling();
     summaryEl.innerHTML = `<div class="msg err">Hata: ${error.message}</div>`;
   } finally {
-    analyzeBtn.disabled = false;
+    updateAnalyzeBtn();
   }
 });
 

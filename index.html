@@ -103,6 +103,44 @@
     #analyzeBtn:hover    { background: #1d4ed8; }
     #analyzeBtn:disabled { background: #93c5fd; cursor: not-allowed; }
 
+    #selectPdfBtn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      background: #fff;
+      color: #334155;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #selectPdfBtn:hover    { border-color: #3b82f6; color: #2563eb; }
+    #selectPdfBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .pdf-file-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 13px;
+      background: #eff6ff;
+      border: 1.5px solid #93c5fd;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #1e40af;
+      font-weight: 500;
+    }
+
+    .input-error {
+      display: block;
+      font-size: 12px;
+      color: #dc2626;
+      margin-top: 4px;
+      min-height: 16px;
+    }
+
     #listBtn {
       display: inline-flex;
       align-items: center;
@@ -784,19 +822,29 @@
         </svg>
         Öğrenci Listesi Yükle
       </button>
-      <button id="analyzeBtn" disabled>
+      <button id="selectPdfBtn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
           <line x1="12" y1="18" x2="12" y2="12"/>
           <line x1="9" y1="15" x2="15" y2="15"/>
         </svg>
-        Transkript PDF Seç ve Analiz Et
+        Transkript PDF Seç
+      </button>
+      <button id="analyzeBtn" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        Analiz Et
       </button>
       <div id="listStatus" style="display:none" class="list-status">
         <span id="listStatusText"></span>
         <button class="list-clear" id="listClearBtn">✕ Temizle</button>
       </div>
+    </div>
+    <div id="pdfFileStatus" style="display:none" class="pdf-file-status">
+      📄 <span id="pdfFileStatusText"></span>
+      <button class="list-clear" id="clearPdfBtn">✕</button>
     </div>
 
     <div id="summary"></div>
@@ -836,6 +884,7 @@
           <input class="add-course-input" id="inputBil493" type="text" placeholder="Ders kodu (ör. BİL324)" />
           <button class="add-course-btn" id="addBil493Btn">+ Koşul Dersi Ekle</button>
         </div>
+        <span class="input-error" id="inputBil493Err"></span>
         <div class="min-count-row">
           <label for="minCountBil493">Geçilmesi gereken ders sayısı:</label>
           <input type="number" id="minCountBil493" min="0" />
@@ -851,6 +900,7 @@
           <input class="add-course-input" id="inputStaj1" type="text" placeholder="Ders kodu (ör. BİL240)" />
           <button class="add-course-btn" id="addStaj1Btn">+ Staj I Koşulu Ekle</button>
         </div>
+        <span class="input-error" id="inputStaj1Err"></span>
       </div>
 
       <div class="settings-section">
@@ -861,6 +911,7 @@
           <input class="add-course-input" id="inputStaj2" type="text" placeholder="Ders kodu (ör. BİL343)" />
           <button class="add-course-btn" id="addStaj2Btn">+ Staj II Koşulu Ekle</button>
         </div>
+        <span class="input-error" id="inputStaj2Err"></span>
 
         <div class="settings-actions">
           <span class="save-toast" id="settingsToast">✓ Kaydedildi</span>
