@@ -617,6 +617,211 @@
       color: var(--text);
       border-color: var(--border);
     }
+
+    /* ── Tab bar ── */
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab-btn {
+      padding: 10px 22px;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab-btn:hover { color: #2563eb; }
+    .tab-btn.active {
+      color: #2563eb;
+      border-bottom-color: #2563eb;
+    }
+    [data-theme="dark"] .tab-btn.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+    [data-theme="dark"] .tab-btn:hover { color: #60a5fa; }
+
+    .tab-page { display: none; }
+    .tab-page.active { display: block; }
+
+    /* ── Settings page ── */
+    .settings-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 4px var(--card-shadow);
+    }
+    .settings-section h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--stat-value);
+      margin-bottom: 6px;
+    }
+    .settings-section .desc {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+    .course-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+      min-height: 40px;
+      padding: 10px;
+      background: var(--surface-alt);
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+    }
+    .course-chips:empty::before {
+      content: 'Henüz ders eklenmemiş.';
+      color: var(--text-dim);
+      font-size: 12.5px;
+      font-style: italic;
+      padding: 6px 4px;
+    }
+    .course-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #93c5fd;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .course-chip:hover {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #fca5a5;
+    }
+    .course-chip:hover .chip-x { opacity: 1; }
+    .course-chip .chip-x {
+      opacity: 0.55;
+      font-weight: 700;
+      font-size: 14px;
+      line-height: 1;
+    }
+    [data-theme="dark"] .course-chip {
+      background: #1e3a5f;
+      color: #93c5fd;
+      border-color: #1e40af;
+    }
+    [data-theme="dark"] .course-chip:hover {
+      background: #5b1d1d;
+      color: #fca5a5;
+      border-color: #991b1b;
+    }
+
+    .add-course-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .add-course-input {
+      flex: 1;
+      min-width: 180px;
+      padding: 9px 13px;
+      border: 1.5px solid var(--input-border);
+      border-radius: 8px;
+      font-size: 13.5px;
+      background: var(--input-bg);
+      color: var(--text);
+      outline: none;
+    }
+    .add-course-input:focus { border-color: #3b82f6; }
+    .add-course-btn {
+      padding: 9px 16px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .add-course-btn:hover { background: #1d4ed8; }
+
+    .min-count-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 14px;
+    }
+    .min-count-row label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .min-count-row input {
+      width: 70px;
+      padding: 7px 10px;
+      border: 1.5px solid var(--input-border);
+      border-radius: 7px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      background: var(--input-bg);
+      color: var(--text);
+      outline: none;
+    }
+    .min-count-row input:focus { border-color: #3b82f6; }
+    .min-count-row .of-text {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .settings-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .reset-btn {
+      padding: 9px 18px;
+      background: var(--surface);
+      color: var(--text-muted);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .reset-btn:hover { color: #b91c1c; border-color: #fca5a5; }
+    .save-toast {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: #d1fae5;
+      color: #065f46;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .save-toast.show { opacity: 1; }
   </style>
 </head>
 <body>
@@ -631,6 +836,12 @@
   </div>
 
   <div class="wrap">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="analyze">Analiz</button>
+      <button class="tab-btn" data-tab="settings">Koşul Ekle / Çıkar</button>
+    </div>
+
+    <div class="tab-page active" id="tab-analyze">
     <div class="api-key-bar">
       <div class="mode-toggle">
         <button class="mode-btn active" data-mode="pdfplumber" id="modePdfplumber">
@@ -703,6 +914,49 @@
     </div>
 
     <div id="results"></div>
+    </div><!-- /tab-analyze -->
+
+    <div class="tab-page" id="tab-settings">
+      <div class="settings-section">
+        <h2>BİL493 (Bitirme) Koşul Dersleri</h2>
+        <p class="desc">Listedeki bir dersi kaldırmak için üzerine tıklayın. Aşağıdan yeni koşul dersi ekleyebilirsiniz.</p>
+        <div class="course-chips" id="chipsBil493"></div>
+        <div class="add-course-row">
+          <input class="add-course-input" id="inputBil493" type="text" placeholder="Ders kodu (ör. BİL324)" />
+          <button class="add-course-btn" id="addBil493Btn">+ Koşul Dersi Ekle</button>
+        </div>
+        <div class="min-count-row">
+          <label for="minCountBil493">Geçilmesi gereken ders sayısı:</label>
+          <input type="number" id="minCountBil493" min="0" />
+          <span class="of-text">/ <span id="totalCountBil493">0</span> ders</span>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Staj I Ön Koşul Dersleri</h2>
+        <p class="desc">Staj I için tüm koşul derslerinin geçilmiş olması gerekir. Çıkarmak için derse tıklayın.</p>
+        <div class="course-chips" id="chipsStaj1"></div>
+        <div class="add-course-row">
+          <input class="add-course-input" id="inputStaj1" type="text" placeholder="Ders kodu (ör. BİL240)" />
+          <button class="add-course-btn" id="addStaj1Btn">+ Staj I Koşulu Ekle</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Staj II Ön Koşul Dersleri</h2>
+        <p class="desc">Staj II için tüm koşul derslerinin (ve Staj I koşullarının) geçilmiş olması gerekir.</p>
+        <div class="course-chips" id="chipsStaj2"></div>
+        <div class="add-course-row">
+          <input class="add-course-input" id="inputStaj2" type="text" placeholder="Ders kodu (ör. BİL343)" />
+          <button class="add-course-btn" id="addStaj2Btn">+ Staj II Koşulu Ekle</button>
+        </div>
+
+        <div class="settings-actions">
+          <span class="save-toast" id="settingsToast">✓ Kaydedildi</span>
+          <button class="reset-btn" id="resetSettingsBtn">Varsayılana Sıfırla</button>
+        </div>
+      </div>
+    </div><!-- /tab-settings -->
   </div>
 
   <script src="renderer.js"></script>

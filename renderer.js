@@ -1,3 +1,157 @@
+/* ── Koşul (requirements) ayarları ── */
+const DEFAULT_REQUIREMENTS = {
+  staj1: ['BİL240', 'BİL265'],
+  staj2: ['BİL343', 'BİL367', 'BİL344', 'BİL386'],
+  bil493Bolum: ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'],
+  bil493BolumMin: 4
+};
+
+function normalizeCourseCode(raw) {
+  return String(raw || '')
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/I/g, 'İ')
+    .trim();
+}
+
+function loadRequirements() {
+  try {
+    const raw = localStorage.getItem('requirementsConfig');
+    if (!raw) return { ...DEFAULT_REQUIREMENTS, staj1: [...DEFAULT_REQUIREMENTS.staj1], staj2: [...DEFAULT_REQUIREMENTS.staj2], bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum] };
+    const parsed = JSON.parse(raw);
+    const cleanArr = (arr, fallback) => Array.isArray(arr) ? [...new Set(arr.map(normalizeCourseCode).filter(Boolean))] : [...fallback];
+    return {
+      staj1: cleanArr(parsed.staj1, DEFAULT_REQUIREMENTS.staj1),
+      staj2: cleanArr(parsed.staj2, DEFAULT_REQUIREMENTS.staj2),
+      bil493Bolum: cleanArr(parsed.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum),
+      bil493BolumMin: Number.isFinite(parsed.bil493BolumMin) ? Math.max(0, Math.floor(parsed.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin
+    };
+  } catch {
+    return { ...DEFAULT_REQUIREMENTS, staj1: [...DEFAULT_REQUIREMENTS.staj1], staj2: [...DEFAULT_REQUIREMENTS.staj2], bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum] };
+  }
+}
+
+let requirements = loadRequirements();
+
+function saveRequirements() {
+  localStorage.setItem('requirementsConfig', JSON.stringify(requirements));
+  const toast = document.getElementById('settingsToast');
+  if (toast) {
+    toast.classList.add('show');
+    clearTimeout(saveRequirements._t);
+    saveRequirements._t = setTimeout(() => toast.classList.remove('show'), 1200);
+  }
+}
+
+function renderChipList(containerId, list, onRemove) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = list.map((code, i) =>
+    `<span class="course-chip" data-idx="${i}" title="Çıkarmak için tıkla">${code}<span class="chip-x">×</span></span>`
+  ).join('');
+  el.querySelectorAll('.course-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const idx = parseInt(chip.dataset.idx, 10);
+      onRemove(idx);
+    });
+  });
+}
+
+function renderSettings() {
+  renderChipList('chipsBil493', requirements.bil493Bolum, (idx) => {
+    const removed = requirements.bil493Bolum[idx];
+    requirements.bil493Bolum.splice(idx, 1);
+    if (requirements.bil493BolumMin > requirements.bil493Bolum.length) {
+      requirements.bil493BolumMin = requirements.bil493Bolum.length;
+    }
+    saveRequirements();
+    renderSettings();
+  });
+  renderChipList('chipsStaj1', requirements.staj1, (idx) => {
+    requirements.staj1.splice(idx, 1);
+    saveRequirements();
+    renderSettings();
+  });
+  renderChipList('chipsStaj2', requirements.staj2, (idx) => {
+    requirements.staj2.splice(idx, 1);
+    saveRequirements();
+    renderSettings();
+  });
+
+  const total = requirements.bil493Bolum.length;
+  const totalEl = document.getElementById('totalCountBil493');
+  if (totalEl) totalEl.textContent = String(total);
+
+  const minInput = document.getElementById('minCountBil493');
+  if (minInput) {
+    minInput.max = String(total);
+    minInput.value = String(Math.min(requirements.bil493BolumMin, total));
+  }
+}
+
+function addCourseTo(listKey, inputId) {
+  const input = document.getElementById(inputId);
+  const code = normalizeCourseCode(input.value);
+  if (!code) return;
+  if (!/^[A-ZÇĞİÖŞÜ]{2,5}\d{2,4}$/.test(code)) {
+    alert('Geçersiz ders kodu. Örnek: BİL324, MAT151');
+    return;
+  }
+  if (requirements[listKey].includes(code)) {
+    alert(`${code} zaten listede.`);
+    return;
+  }
+  requirements[listKey].push(code);
+  saveRequirements();
+  renderSettings();
+  input.value = '';
+  input.focus();
+}
+
+/* ── Tab navigation ── */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const page = document.getElementById('tab-' + btn.dataset.tab);
+    if (page) page.classList.add('active');
+    if (btn.dataset.tab === 'settings') renderSettings();
+  });
+});
+
+/* ── Settings actions ── */
+document.getElementById('addBil493Btn')?.addEventListener('click', () => addCourseTo('bil493Bolum', 'inputBil493'));
+document.getElementById('addStaj1Btn') ?.addEventListener('click', () => addCourseTo('staj1', 'inputStaj1'));
+document.getElementById('addStaj2Btn') ?.addEventListener('click', () => addCourseTo('staj2', 'inputStaj2'));
+
+['inputBil493', 'inputStaj1', 'inputStaj2'].forEach((id, i) => {
+  const keys = ['bil493Bolum', 'staj1', 'staj2'];
+  document.getElementById(id)?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addCourseTo(keys[i], id);
+  });
+});
+
+document.getElementById('minCountBil493')?.addEventListener('input', (e) => {
+  const val = parseInt(e.target.value, 10);
+  if (!Number.isFinite(val) || val < 0) return;
+  const total = requirements.bil493Bolum.length;
+  requirements.bil493BolumMin = Math.min(Math.max(0, val), total);
+  saveRequirements();
+});
+
+document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
+  if (!confirm('Tüm koşullar varsayılan değerlere döndürülecek. Devam edilsin mi?')) return;
+  requirements = {
+    staj1: [...DEFAULT_REQUIREMENTS.staj1],
+    staj2: [...DEFAULT_REQUIREMENTS.staj2],
+    bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum],
+    bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin
+  };
+  saveRequirements();
+  renderSettings();
+});
+
 const analyzeBtn   = document.getElementById('analyzeBtn');
 const listBtn      = document.getElementById('listBtn');
 const listStatusEl = document.getElementById('listStatus');
@@ -152,10 +306,12 @@ function renderStudent(student) {
     ? '<div class="unlisted-badge">⚠ Listede Yok</div>'
     : '';
 
+  const bil493Total = student.bil493BolumTotal ?? student.bil493BolumDetails.length;
+  const bil493Min   = student.bil493BolumMin   ?? 4;
   const bil493Summary = student.bil493Eligible
-    ? `${student.bil493BolumPassedCount}/6 bölüm geçildi, tüm ortak dersler ✔`
+    ? `${student.bil493BolumPassedCount}/${bil493Total} bölüm geçildi, tüm ortak dersler ✔`
     : [
-        `${student.bil493BolumPassedCount}/6 bölüm geçildi (min. ${4})`,
+        `${student.bil493BolumPassedCount}/${bil493Total} bölüm geçildi (min. ${bil493Min})`,
         student.bil493OrtakAllPassed ? null : 'ortak dersler eksik'
       ].filter(Boolean).join(' · ');
 
@@ -337,7 +493,7 @@ analyzeBtn.addEventListener('click', async () => {
   startPolling();
   try {
     const apiKey = (geminiKeyEl?.value || localStorage.getItem('geminiApiKey') || '').trim();
-    const analyzeOptions = { mode: activeMode };
+    const analyzeOptions = { mode: activeMode, requirementsConfig: requirements };
     if (activeMode === 'gemini' && apiKey) analyzeOptions.apiKey = apiKey;
     if (studentListData) analyzeOptions.filterStudentEntries = studentListData.studentEntries;
     const data = await window.electronAPI.pickPdfAndAnalyze(analyzeOptions);

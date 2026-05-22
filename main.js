@@ -96,16 +96,81 @@ const COURSE_ALIASES = {
   FİZ110: ['FİZ110', 'FIZ110', 'PHYS110'],
 };
 
-const STAJ1_REQUIRED = ['BİL240', 'BİL265'];
-const STAJ2_REQUIRED = ['BİL343', 'BİL367', 'BİL344', 'BİL386'];
-
-// BİL493 ön koşul kuralı: Bölüm derslerinden en az 4 tanesi + tüm ortak dersler ≥ D
-const BİL493_BOLUM     = ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'];
-const BİL493_BOLUM_MIN = 4;
-const BİL493_ORTAK     = ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
-                           'BİL101', 'BİL105', 'BİL122', 'BİL124'];
+const DEFAULT_REQUIREMENTS = {
+  staj1: ['BİL240', 'BİL265'],
+  staj2: ['BİL343', 'BİL367', 'BİL344', 'BİL386'],
+  bil493Bolum: ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'],
+  bil493BolumMin: 4,
+  bil493Ortak: ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
+                 'BİL101', 'BİL105', 'BİL122', 'BİL124']
+};
 
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
+
+// Kullanıcı kendi koşul listesine bir ders eklediğinde, kanonik koda göre
+// otomatik alias üretip TRACKED_COURSES'a dahil ederiz; böylece parser/Gemini
+// o dersin notunu da çıkarmaya çalışır.
+function ensureCourseRegistered(rawCode) {
+  if (!rawCode) return null;
+  const canonical = normalizeCode(rawCode);
+  if (!canonical) return null;
+  if (COURSE_ALIASES[canonical]) return canonical;
+
+  const aliases = new Set([canonical]);
+  if (canonical.startsWith('BİL')) {
+    const num = canonical.slice(3);
+    aliases.add('BIL' + num);
+    aliases.add('CSE' + num);
+  } else if (canonical.startsWith('BIL')) {
+    const num = canonical.slice(3);
+    aliases.add('BİL' + num);
+    aliases.add('CSE' + num);
+  } else if (canonical.startsWith('CSE')) {
+    const num = canonical.slice(3);
+    aliases.add('BİL' + num);
+    aliases.add('BIL' + num);
+  } else if (canonical.startsWith('MAT')) {
+    const num = canonical.slice(3);
+    aliases.add('MATH' + num);
+  } else if (canonical.startsWith('MATH')) {
+    const num = canonical.slice(4);
+    aliases.add('MAT' + num);
+  } else if (canonical.startsWith('FİZ') || canonical.startsWith('FIZ')) {
+    const num = canonical.slice(3);
+    aliases.add('FİZ' + num);
+    aliases.add('FIZ' + num);
+    aliases.add('PHYS' + num);
+  } else if (canonical.startsWith('PHYS')) {
+    const num = canonical.slice(4);
+    aliases.add('FİZ' + num);
+    aliases.add('FIZ' + num);
+  }
+
+  COURSE_ALIASES[canonical] = [...aliases];
+  TRACKED_COURSES.push(canonical);
+  return canonical;
+}
+
+function buildRequirements(input) {
+  const cfg = input && typeof input === 'object' ? input : {};
+  const cleanList = (arr, fallback) => {
+    if (!Array.isArray(arr)) return [...fallback];
+    const out = [];
+    for (const c of arr) {
+      const canonical = ensureCourseRegistered(c);
+      if (canonical && !out.includes(canonical)) out.push(canonical);
+    }
+    return out;
+  };
+  const min = Number.isFinite(cfg.bil493BolumMin) ? Math.max(0, Math.floor(cfg.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin;
+  return {
+    staj1: cleanList(cfg.staj1, DEFAULT_REQUIREMENTS.staj1),
+    staj2: cleanList(cfg.staj2, DEFAULT_REQUIREMENTS.staj2),
+    bil493Bolum: cleanList(cfg.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum),
+    bil493BolumMin: min,
+    bil493Ortak: cleanList(cfg.bil493Ortak, DEFAULT_REQUIREMENTS.bil493Ortak)
+  };
+}
 
 // Gemini'ye sadece karıştırılabilecek staj/bölüm dersleri gönderilir;
 // MAT/FİZ/BİL101-124 regex ile zaten doğru okunuyor, prompt boyutunu küçültmek için dışarıda bırakılır.
@@ -1162,8 +1227,8 @@ function parseStudentPage(pageText) {
   };
 }
 
-function evaluateStudent(student) {
-  const staj1Details = STAJ1_REQUIRED.map(code => {
+function evaluateStudent(student, requirements = DEFAULT_REQUIREMENTS) {
+  const staj1Details = requirements.staj1.map(code => {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
@@ -1172,7 +1237,7 @@ function evaluateStudent(student) {
   const staj1CourseGrade = student.courses['BİL300'];
   const staj1TakenAndPassed = hasPassingGrade(staj1CourseGrade);
 
-  const staj2Details = STAJ2_REQUIRED.map(code => {
+  const staj2Details = requirements.staj2.map(code => {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
@@ -1181,20 +1246,21 @@ function evaluateStudent(student) {
     staj1TakenAndPassed &&
     staj2Details.every(item => item.passed);
 
-  // BİL493 ön koşul: bölüm derslerinden en az 4 tanesi + tüm ortak dersler ≥ D
-  const bil493BolumDetails = BİL493_BOLUM.map(code => {
+  // BİL493 ön koşul: bölüm derslerinden en az N tanesi + tüm ortak dersler ≥ D
+  const bil493BolumDetails = requirements.bil493Bolum.map(code => {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
   const bil493BolumPassedCount = bil493BolumDetails.filter(i => i.passed).length;
+  const bil493BolumMin = Math.min(requirements.bil493BolumMin, requirements.bil493Bolum.length);
 
-  const bil493OrtakDetails = BİL493_ORTAK.map(code => {
+  const bil493OrtakDetails = requirements.bil493Ortak.map(code => {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
   const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
 
-  const bil493Eligible = bil493BolumPassedCount >= BİL493_BOLUM_MIN && bil493OrtakAllPassed;
+  const bil493Eligible = bil493BolumPassedCount >= bil493BolumMin && bil493OrtakAllPassed;
 
   // BİL494 ön koşul: BİL493 tamamlanmış olmalı
   const bil493AlreadyPassed = hasPassingGrade(student.courses['BİL493']);
@@ -1216,6 +1282,8 @@ function evaluateStudent(student) {
     staj2Eligible,
     bil493BolumDetails,
     bil493BolumPassedCount,
+    bil493BolumTotal: requirements.bil493Bolum.length,
+    bil493BolumMin,
     bil493OrtakDetails,
     bil493OrtakAllPassed,
     bil493Eligible,
@@ -1312,6 +1380,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
     }
 
     const filePath = result.filePaths[0];
+    const requirements = buildRequirements(options.requirementsConfig);
 
     // ── pdfplumber modu ────────────────────────────────────────────────────────────────
     if (options.mode === 'pdfplumber') {
@@ -1334,7 +1403,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
       }));
 
       const students = parseResults
-        .map(evaluateStudent)
+        .map(s => evaluateStudent(s, requirements))
         .filter(s => s.studentNo !== 'Bilinmiyor');
 
       const studentMatches = (s, e) =>
@@ -1470,7 +1539,7 @@ ipcMain.handle('pick-pdf-and-analyze', async (_event, options = {}) => {
     }
 
     const students = parseResults
-      .map(evaluateStudent)
+      .map(s => evaluateStudent(s, requirements))
       .filter(student => student.studentNo !== 'Bilinmiyor');
 
     // Öğrenci eşleştirme: önce numara (kesin), numara yoksa isim karşılaştırması
