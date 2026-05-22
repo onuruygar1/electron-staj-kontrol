@@ -51,6 +51,14 @@ VALID_GRADE_RE = re.compile(
     r"^(A[+\-]?|B[+\-]?|C[+\-]?|D[+]?|D|F[12]?|XX|Y|P)$"
 )
 
+# Muaf tablosunda not+puan bazen bitişik gelir: "B+17," veya "7C+16,"
+_MUAF_EMBEDDED_GRADE_RE = re.compile(
+    r"(?<![A-ZÇĞİÖŞÜa-zçğışöü])"
+    r"(A[+\-]?|B[+\-]?|C[+\-]?|D\+?|F[12]?|XX|Y|P)"
+    r"(?![A-ZÇĞİÖŞÜa-zçğışöü])",
+    re.UNICODE,
+)
+
 # Satır içi not arama — boşluklu varyantları da yakala
 GRADE_SCAN_RE = re.compile(
     r"(?<![A-ZÇĞİÖŞÜ0-9])"
@@ -400,6 +408,13 @@ def extract_muafiyet_courses(plumber_page):
             if VALID_GRADE_RE.match(g):
                 results[canonical] = g
                 print(f"[MUAF DEBUG] Bulundu: {canonical} -> {g}", file=sys.stderr)
+                break
+            # Not+puan bitişik geldiğinde (örn. "B+17," ya da "7C+16,") içinden notu çıkar
+            m = _MUAF_EMBEDDED_GRADE_RE.search(word["text"])
+            if m:
+                eg = clean_grade(m.group(1))
+                results[canonical] = eg
+                print(f"[MUAF DEBUG] Bulundu (gomulu): {canonical} -> {eg}", file=sys.stderr)
                 break
 
     print(f"[MUAF DEBUG] Toplam muaf ders: {len(results)}", file=sys.stderr)

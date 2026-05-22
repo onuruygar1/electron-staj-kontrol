@@ -752,6 +752,17 @@
       color: var(--text-muted);
     }
 
+    .single-course-setting {
+      margin-bottom: 14px;
+    }
+    .single-course-setting label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
     .settings-actions {
       display: flex;
       gap: 10px;
@@ -912,6 +923,11 @@
           <button class="add-course-btn" id="addStaj1Btn">+ Staj I Koşulu Ekle</button>
         </div>
         <span class="input-error" id="inputStaj1Err"></span>
+        <div class="min-count-row">
+          <label for="minCountStaj1">Geçilmesi gereken ders sayısı:</label>
+          <input type="number" id="minCountStaj1" min="0" />
+          <span class="of-text">/ <span id="totalCountStaj1">0</span> ders</span>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -923,10 +939,47 @@
           <button class="add-course-btn" id="addStaj2Btn">+ Staj II Koşulu Ekle</button>
         </div>
         <span class="input-error" id="inputStaj2Err"></span>
+        <div class="min-count-row">
+          <label for="minCountStaj2">Geçilmesi gereken ders sayısı:</label>
+          <input type="number" id="minCountStaj2" min="0" />
+          <span class="of-text">/ <span id="totalCountStaj2">0</span> ders</span>
+        </div>
 
         <div class="settings-actions">
           <span class="save-toast" id="settingsToast">✓ Kaydedildi</span>
           <button class="reset-btn" id="resetSettingsBtn">Varsayılana Sıfırla</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Tamamlama ve Önkoşul Dersleri</h2>
+        <p class="desc">Staj I/II tamamlama dersleri ile BİL494 önkoşul dersini belirleyin. Mevcut değeri görmek için placeholder'a bakın.</p>
+
+        <div class="single-course-setting">
+          <label>Staj I Tamamlama Dersi (Staj II için önkoşul):</label>
+          <div class="add-course-row">
+            <input class="add-course-input" id="inputCourseStaj1" type="text" placeholder="BİL300" />
+            <button class="add-course-btn" id="setCourseStaj1Btn">Güncelle</button>
+          </div>
+          <span class="input-error" id="inputCourseStaj1Err"></span>
+        </div>
+
+        <div class="single-course-setting">
+          <label>Staj II Tamamlama Dersi:</label>
+          <div class="add-course-row">
+            <input class="add-course-input" id="inputCourseStaj2" type="text" placeholder="BİL498" />
+            <button class="add-course-btn" id="setCourseStaj2Btn">Güncelle</button>
+          </div>
+          <span class="input-error" id="inputCourseStaj2Err"></span>
+        </div>
+
+        <div class="single-course-setting">
+          <label>BİL494 Önkoşul Dersi (tamamlanmış olması gereken):</label>
+          <div class="add-course-row">
+            <input class="add-course-input" id="inputCourseBil494" type="text" placeholder="BİL493" />
+            <button class="add-course-btn" id="setCourseBil494Btn">Güncelle</button>
+          </div>
+          <span class="input-error" id="inputCourseBil494Err"></span>
         </div>
       </div>
     </div><!-- /tab-settings -->

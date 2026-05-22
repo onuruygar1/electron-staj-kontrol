@@ -1,11 +1,16 @@
 /* ── Koşul (requirements) ayarları ── */
 const DEFAULT_REQUIREMENTS = {
   staj1: ['BİL240', 'BİL265'],
+  staj1Min: 2,
+  staj1Course: 'BİL300',
   staj2: ['BİL343', 'BİL367', 'BİL344', 'BİL386'],
+  staj2Min: 4,
+  staj2Course: 'BİL498',
   bil493Bolum: ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'],
   bil493BolumMin: 4,
   bil493Ortak: ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
-                'BİL101', 'BİL105', 'BİL122', 'BİL124']
+                'BİL101', 'BİL105', 'BİL122', 'BİL124'],
+  bil494Prereq: 'BİL493'
 };
 
 function normalizeCourseCode(raw) {
@@ -19,23 +24,44 @@ function normalizeCourseCode(raw) {
 function loadRequirements() {
   try {
     const raw = localStorage.getItem('requirementsConfig');
-    if (!raw) return { ...DEFAULT_REQUIREMENTS, staj1: [...DEFAULT_REQUIREMENTS.staj1], staj2: [...DEFAULT_REQUIREMENTS.staj2], bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum] };
+    if (!raw) return {
+      staj1: [...DEFAULT_REQUIREMENTS.staj1], staj1Min: DEFAULT_REQUIREMENTS.staj1Min,
+      staj1Course: DEFAULT_REQUIREMENTS.staj1Course,
+      staj2: [...DEFAULT_REQUIREMENTS.staj2], staj2Min: DEFAULT_REQUIREMENTS.staj2Min,
+      staj2Course: DEFAULT_REQUIREMENTS.staj2Course,
+      bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum], bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
+      bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak],
+      bil494Prereq: DEFAULT_REQUIREMENTS.bil494Prereq
+    };
     const parsed = JSON.parse(raw);
     const cleanArr = (arr, fallback) => Array.isArray(arr) ? [...new Set(arr.map(normalizeCourseCode).filter(Boolean))] : [...fallback];
+    const clampMin = (val, fallback, list) => Math.min(Number.isFinite(val) ? Math.max(0, Math.floor(val)) : fallback, list.length);
+    const cleanSingle = (val, fallback) => {
+      const c = normalizeCourseCode(val || '');
+      return /^[A-ZÇĞİÖŞÜ]{2,5}\d{2,4}$/.test(c) ? c : fallback;
+    };
+    const staj1  = cleanArr(parsed.staj1,       DEFAULT_REQUIREMENTS.staj1);
+    const staj2  = cleanArr(parsed.staj2,       DEFAULT_REQUIREMENTS.staj2);
+    const bolum  = cleanArr(parsed.bil493Bolum,  DEFAULT_REQUIREMENTS.bil493Bolum);
+    const ortak  = cleanArr(parsed.bil493Ortak,  DEFAULT_REQUIREMENTS.bil493Ortak);
     return {
-      staj1: cleanArr(parsed.staj1, DEFAULT_REQUIREMENTS.staj1),
-      staj2: cleanArr(parsed.staj2, DEFAULT_REQUIREMENTS.staj2),
-      bil493Bolum: cleanArr(parsed.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum),
-      bil493BolumMin: Number.isFinite(parsed.bil493BolumMin) ? Math.max(0, Math.floor(parsed.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin,
-      bil493Ortak: cleanArr(parsed.bil493Ortak, DEFAULT_REQUIREMENTS.bil493Ortak)
+      staj1,       staj1Min:    clampMin(parsed.staj1Min, DEFAULT_REQUIREMENTS.staj1Min, staj1),
+      staj1Course: cleanSingle(parsed.staj1Course, DEFAULT_REQUIREMENTS.staj1Course),
+      staj2,       staj2Min:    clampMin(parsed.staj2Min, DEFAULT_REQUIREMENTS.staj2Min, staj2),
+      staj2Course: cleanSingle(parsed.staj2Course, DEFAULT_REQUIREMENTS.staj2Course),
+      bil493Bolum: bolum, bil493BolumMin: clampMin(parsed.bil493BolumMin, DEFAULT_REQUIREMENTS.bil493BolumMin, bolum),
+      bil493Ortak: ortak,
+      bil494Prereq: cleanSingle(parsed.bil494Prereq, DEFAULT_REQUIREMENTS.bil494Prereq)
     };
   } catch {
     return {
-      staj1: [...DEFAULT_REQUIREMENTS.staj1],
-      staj2: [...DEFAULT_REQUIREMENTS.staj2],
-      bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum],
-      bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
-      bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak]
+      staj1: [...DEFAULT_REQUIREMENTS.staj1], staj1Min: DEFAULT_REQUIREMENTS.staj1Min,
+      staj1Course: DEFAULT_REQUIREMENTS.staj1Course,
+      staj2: [...DEFAULT_REQUIREMENTS.staj2], staj2Min: DEFAULT_REQUIREMENTS.staj2Min,
+      staj2Course: DEFAULT_REQUIREMENTS.staj2Course,
+      bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum], bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
+      bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak],
+      bil494Prereq: DEFAULT_REQUIREMENTS.bil494Prereq
     };
   }
 }
@@ -54,14 +80,18 @@ function reEvaluateStudent(student) {
   const staj1Details = requirements.staj1.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
   }));
-  const staj1Eligible = staj1Details.every(i => i.passed);
-  const staj1CourseGrade = c['BİL300'];
+  const staj1PassedCount = staj1Details.filter(i => i.passed).length;
+  const staj1Min_re = Math.min(requirements.staj1Min, requirements.staj1.length);
+  const staj1Eligible = staj1PassedCount >= staj1Min_re;
+  const staj1CourseGrade = c[requirements.staj1Course];
   const staj1TakenAndPassed = clientHasPassingGrade(staj1CourseGrade);
 
   const staj2Details = requirements.staj2.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
   }));
-  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2Details.every(i => i.passed);
+  const staj2PassedCount = staj2Details.filter(i => i.passed).length;
+  const staj2Min_re = Math.min(requirements.staj2Min, requirements.staj2.length);
+  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2PassedCount >= staj2Min_re;
 
   const bil493BolumDetails = requirements.bil493Bolum.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
@@ -75,7 +105,7 @@ function reEvaluateStudent(student) {
   const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
   const bil493Eligible = bil493BolumPassedCount >= bil493BolumMin && bil493OrtakAllPassed;
 
-  const bil493AlreadyPassed = clientHasPassingGrade(c['BİL493']);
+  const bil493AlreadyPassed = clientHasPassingGrade(c[requirements.bil494Prereq]);
   const bil494Eligible = bil493AlreadyPassed;
 
   return {
@@ -142,24 +172,41 @@ function renderSettings() {
   });
   renderChipList('chipsStaj1', requirements.staj1, (idx) => {
     requirements.staj1.splice(idx, 1);
+    if (requirements.staj1Min > requirements.staj1.length) requirements.staj1Min = requirements.staj1.length;
     saveRequirements();
     renderSettings();
   });
   renderChipList('chipsStaj2', requirements.staj2, (idx) => {
     requirements.staj2.splice(idx, 1);
+    if (requirements.staj2Min > requirements.staj2.length) requirements.staj2Min = requirements.staj2.length;
     saveRequirements();
     renderSettings();
   });
 
-  const total = requirements.bil493Bolum.length;
+  const total493 = requirements.bil493Bolum.length;
   const totalEl = document.getElementById('totalCountBil493');
-  if (totalEl) totalEl.textContent = String(total);
+  if (totalEl) totalEl.textContent = String(total493);
+  const minInput493 = document.getElementById('minCountBil493');
+  if (minInput493) { minInput493.max = String(total493); minInput493.value = String(Math.min(requirements.bil493BolumMin, total493)); }
 
-  const minInput = document.getElementById('minCountBil493');
-  if (minInput) {
-    minInput.max = String(total);
-    minInput.value = String(Math.min(requirements.bil493BolumMin, total));
-  }
+  const totalS1 = requirements.staj1.length;
+  const totalS1El = document.getElementById('totalCountStaj1');
+  if (totalS1El) totalS1El.textContent = String(totalS1);
+  const minS1 = document.getElementById('minCountStaj1');
+  if (minS1) { minS1.max = String(totalS1); minS1.value = String(Math.min(requirements.staj1Min, totalS1)); }
+
+  const totalS2 = requirements.staj2.length;
+  const totalS2El = document.getElementById('totalCountStaj2');
+  if (totalS2El) totalS2El.textContent = String(totalS2);
+  const minS2 = document.getElementById('minCountStaj2');
+  if (minS2) { minS2.max = String(totalS2); minS2.value = String(Math.min(requirements.staj2Min, totalS2)); }
+
+  const inS1C = document.getElementById('inputCourseStaj1');
+  if (inS1C) inS1C.placeholder = requirements.staj1Course;
+  const inS2C = document.getElementById('inputCourseStaj2');
+  if (inS2C) inS2C.placeholder = requirements.staj2Course;
+  const inB4P = document.getElementById('inputCourseBil494');
+  if (inB4P) inB4P.placeholder = requirements.bil494Prereq;
 }
 
 function addCourseTo(listKey, inputId) {
@@ -190,6 +237,29 @@ function addCourseTo(listKey, inputId) {
   input.focus();
 }
 
+function setSingleCourse(key, inputId) {
+  const input = document.getElementById(inputId);
+  const errEl = document.getElementById(inputId + 'Err');
+  const showErr = (msg) => {
+    if (errEl) {
+      errEl.textContent = msg;
+      clearTimeout(showErr._t);
+      showErr._t = setTimeout(() => { errEl.textContent = ''; }, 2500);
+    }
+    input.focus();
+  };
+  const code = normalizeCourseCode(input.value);
+  if (!code || !/^[A-ZÇĞİÖŞÜ]{2,5}\d{2,4}$/.test(code)) {
+    showErr('Geçersiz ders kodu. Örnek: BİL300, BİL498');
+    return;
+  }
+  requirements[key] = code;
+  saveRequirements();
+  renderSettings();
+  input.value = '';
+  input.focus();
+}
+
 /* ── Tab navigation ── */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -207,6 +277,9 @@ document.getElementById('addBil493Btn')    ?.addEventListener('click', () => add
 document.getElementById('addOrtakBil493Btn')?.addEventListener('click', () => addCourseTo('bil493Ortak', 'inputOrtakBil493'));
 document.getElementById('addStaj1Btn')     ?.addEventListener('click', () => addCourseTo('staj1', 'inputStaj1'));
 document.getElementById('addStaj2Btn')     ?.addEventListener('click', () => addCourseTo('staj2', 'inputStaj2'));
+document.getElementById('setCourseStaj1Btn')?.addEventListener('click', () => setSingleCourse('staj1Course', 'inputCourseStaj1'));
+document.getElementById('setCourseStaj2Btn')?.addEventListener('click', () => setSingleCourse('staj2Course', 'inputCourseStaj2'));
+document.getElementById('setCourseBil494Btn')?.addEventListener('click', () => setSingleCourse('bil494Prereq', 'inputCourseBil494'));
 
 ['inputBil493', 'inputOrtakBil493', 'inputStaj1', 'inputStaj2'].forEach((id, i) => {
   const keys = ['bil493Bolum', 'bil493Ortak', 'staj1', 'staj2'];
@@ -214,23 +287,41 @@ document.getElementById('addStaj2Btn')     ?.addEventListener('click', () => add
     if (e.key === 'Enter') addCourseTo(keys[i], id);
   });
 });
+[['inputCourseStaj1', 'staj1Course'], ['inputCourseStaj2', 'staj2Course'], ['inputCourseBil494', 'bil494Prereq']].forEach(([id, key]) => {
+  document.getElementById(id)?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') setSingleCourse(key, id);
+  });
+});
 
 document.getElementById('minCountBil493')?.addEventListener('input', (e) => {
   const val = parseInt(e.target.value, 10);
   if (!Number.isFinite(val) || val < 0) return;
-  const total = requirements.bil493Bolum.length;
-  requirements.bil493BolumMin = Math.min(Math.max(0, val), total);
+  requirements.bil493BolumMin = Math.min(Math.max(0, val), requirements.bil493Bolum.length);
+  saveRequirements();
+});
+document.getElementById('minCountStaj1')?.addEventListener('input', (e) => {
+  const val = parseInt(e.target.value, 10);
+  if (!Number.isFinite(val) || val < 0) return;
+  requirements.staj1Min = Math.min(Math.max(0, val), requirements.staj1.length);
+  saveRequirements();
+});
+document.getElementById('minCountStaj2')?.addEventListener('input', (e) => {
+  const val = parseInt(e.target.value, 10);
+  if (!Number.isFinite(val) || val < 0) return;
+  requirements.staj2Min = Math.min(Math.max(0, val), requirements.staj2.length);
   saveRequirements();
 });
 
 document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
   if (!confirm('Tüm koşullar varsayılan değerlere döndürülecek. Devam edilsin mi?')) return;
   requirements = {
-    staj1: [...DEFAULT_REQUIREMENTS.staj1],
-    staj2: [...DEFAULT_REQUIREMENTS.staj2],
-    bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum],
-    bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
-    bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak]
+    staj1: [...DEFAULT_REQUIREMENTS.staj1], staj1Min: DEFAULT_REQUIREMENTS.staj1Min,
+    staj1Course: DEFAULT_REQUIREMENTS.staj1Course,
+    staj2: [...DEFAULT_REQUIREMENTS.staj2], staj2Min: DEFAULT_REQUIREMENTS.staj2Min,
+    staj2Course: DEFAULT_REQUIREMENTS.staj2Course,
+    bil493Bolum: [...DEFAULT_REQUIREMENTS.bil493Bolum], bil493BolumMin: DEFAULT_REQUIREMENTS.bil493BolumMin,
+    bil493Ortak: [...DEFAULT_REQUIREMENTS.bil493Ortak],
+    bil494Prereq: DEFAULT_REQUIREMENTS.bil494Prereq
   };
   saveRequirements();
   renderSettings();
@@ -384,14 +475,20 @@ function renderStudent(student) {
   const staj1Details = requirements.staj1.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
   }));
-  const staj1Eligible = staj1Details.every(i => i.passed);
-  const staj1CourseGrade = c['BİL300'];
+  const staj1PassedCount_d = staj1Details.filter(i => i.passed).length;
+  const staj1Total = staj1Details.length;
+  const staj1Min = Math.min(requirements.staj1Min, staj1Total);
+  const staj1Eligible = staj1PassedCount_d >= staj1Min;
+  const staj1CourseGrade = c[requirements.staj1Course];
   const staj1TakenAndPassed = clientHasPassingGrade(staj1CourseGrade);
 
   const staj2Details = requirements.staj2.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
   }));
-  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2Details.every(i => i.passed);
+  const staj2PassedCount_d = staj2Details.filter(i => i.passed).length;
+  const staj2Total = staj2Details.length;
+  const staj2Min = Math.min(requirements.staj2Min, staj2Total);
+  const staj2Eligible = staj1Eligible && staj1TakenAndPassed && staj2PassedCount_d >= staj2Min;
 
   const bil493BolumDetails = requirements.bil493Bolum.map(code => ({
     code, grade: c[code], passed: clientHasPassingGrade(c[code])
@@ -406,7 +503,7 @@ function renderStudent(student) {
   const bil493OrtakAllPassed = bil493OrtakDetails.every(i => i.passed);
   const bil493Eligible = bil493BolumPassedCount >= bil493Min && bil493OrtakAllPassed;
 
-  const bil493AlreadyPassed = clientHasPassingGrade(c['BİL493']);
+  const bil493AlreadyPassed = clientHasPassingGrade(c[requirements.bil494Prereq]);
   const bil494Eligible = bil493AlreadyPassed;
 
   const bil493Summary = bil493Eligible
@@ -416,13 +513,21 @@ function renderStudent(student) {
         bil493OrtakAllPassed ? null : 'ortak dersler eksik'
       ].filter(Boolean).join(' · ');
 
+  const staj1Summary = `${staj1PassedCount_d}/${staj1Total} ders geçildi${staj1Eligible ? ' ✔' : ` (min. ${staj1Min})`}`;
+  const staj2Summary = staj2Eligible
+    ? `${staj2PassedCount_d}/${staj2Total} ders geçildi ✔`
+    : [
+        (!staj1Eligible || !staj1TakenAndPassed) ? `Staj I / ${requirements.staj1Course} koşulu eksik` : null,
+        staj2PassedCount_d < staj2Min ? `${staj2PassedCount_d}/${staj2Total} ders geçildi (min. ${staj2Min})` : null
+      ].filter(Boolean).join(' · ');
+
   const rows = [
     ...staj1Details.map(i => ({ sec: 's1',    label: 'Staj I',         code: i.code, grade: i.grade, passed: i.passed })),
-    {                          sec: 'pre',    label: 'Ön Koşul',       code: 'BİL300 (Staj I)', grade: staj1CourseGrade, passed: staj1TakenAndPassed },
+    {                          sec: 'pre',    label: 'Ön Koşul',       code: `${requirements.staj1Course} (Staj I)`, grade: staj1CourseGrade, passed: staj1TakenAndPassed },
     ...staj2Details.map(i => ({ sec: 's2',    label: 'Staj II',        code: i.code, grade: i.grade, passed: i.passed })),
     ...bil493BolumDetails.map(i => ({ sec: 'b493',  label: 'BİL493 Bölüm', code: i.code, grade: i.grade, passed: i.passed })),
     ...bil493OrtakDetails.map(i => ({ sec: 'b493o', label: 'BİL493 Ortak', code: i.code, grade: i.grade, passed: i.passed })),
-    { sec: 'b494', label: 'BİL494 Ön Koşul', code: 'BİL493 (tamamlandı mı?)', grade: c['BİL493'], passed: bil493AlreadyPassed },
+    { sec: 'b494', label: 'BİL494 Ön Koşul', code: `${requirements.bil494Prereq} (tamamlandı mı?)`, grade: c[requirements.bil494Prereq], passed: bil493AlreadyPassed },
   ];
 
   return `
@@ -459,6 +564,12 @@ function renderStudent(student) {
               <td>${r.grade ? `<span class="grade">${r.grade}</span>` : '<span class="grade none">Bulunamadı</span>'}</td>
               <td>${r.passed ? '<span class="ok-txt">✓ Geçti</span>' : '<span class="bad-txt">✗ Kaldı / Yok</span>'}</td>
             </tr>`).join('')}
+          <tr class="s1-summary-row">
+            <td colspan="4"><strong>Staj I Özet:</strong> ${staj1Summary}</td>
+          </tr>
+          <tr class="s2-summary-row">
+            <td colspan="4"><strong>Staj II Özet:</strong> ${staj2Summary}</td>
+          </tr>
           <tr class="b493-summary-row">
             <td colspan="4"><strong>BİL493 Özet:</strong> ${bil493Summary}</td>
           </tr>

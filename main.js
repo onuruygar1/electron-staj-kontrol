@@ -84,11 +84,16 @@ const COURSE_ALIASES = {
 
 const DEFAULT_REQUIREMENTS = {
   staj1: ['BİL240', 'BİL265'],
+  staj1Min: 2,
+  staj1Course: 'BİL300',
   staj2: ['BİL343', 'BİL367', 'BİL344', 'BİL386'],
+  staj2Min: 4,
+  staj2Course: 'BİL498',
   bil493Bolum: ['BİL324', 'BİL332', 'BİL343', 'BİL344', 'BİL367', 'BİL386'],
   bil493BolumMin: 4,
   bil493Ortak: ['MAT151', 'MAT152', 'FİZ103', 'FİZ104', 'FİZ105', 'FİZ110',
-                 'BİL101', 'BİL105', 'BİL122', 'BİL124']
+                 'BİL101', 'BİL105', 'BİL122', 'BİL124'],
+  bil494Prereq: 'BİL493'
 };
 
 const TRACKED_COURSES = Object.keys(COURSE_ALIASES);
@@ -148,13 +153,29 @@ function buildRequirements(input) {
     }
     return out;
   };
-  const min = Number.isFinite(cfg.bil493BolumMin) ? Math.max(0, Math.floor(cfg.bil493BolumMin)) : DEFAULT_REQUIREMENTS.bil493BolumMin;
+  const clampMin = (val, fallback, list) => {
+    const n = Number.isFinite(val) ? Math.max(0, Math.floor(val)) : fallback;
+    return Math.min(n, list.length);
+  };
+  const cleanSingle = (val, fallback) => {
+    const canonical = val ? ensureCourseRegistered(String(val)) : null;
+    return canonical || fallback;
+  };
+  const staj1  = cleanList(cfg.staj1,      DEFAULT_REQUIREMENTS.staj1);
+  const staj2  = cleanList(cfg.staj2,      DEFAULT_REQUIREMENTS.staj2);
+  const bolum  = cleanList(cfg.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum);
+  const ortak  = cleanList(cfg.bil493Ortak, DEFAULT_REQUIREMENTS.bil493Ortak);
   return {
-    staj1: cleanList(cfg.staj1, DEFAULT_REQUIREMENTS.staj1),
-    staj2: cleanList(cfg.staj2, DEFAULT_REQUIREMENTS.staj2),
-    bil493Bolum: cleanList(cfg.bil493Bolum, DEFAULT_REQUIREMENTS.bil493Bolum),
-    bil493BolumMin: min,
-    bil493Ortak: cleanList(cfg.bil493Ortak, DEFAULT_REQUIREMENTS.bil493Ortak)
+    staj1,
+    staj1Min: clampMin(cfg.staj1Min, DEFAULT_REQUIREMENTS.staj1Min, staj1),
+    staj1Course: cleanSingle(cfg.staj1Course, DEFAULT_REQUIREMENTS.staj1Course),
+    staj2,
+    staj2Min: clampMin(cfg.staj2Min, DEFAULT_REQUIREMENTS.staj2Min, staj2),
+    staj2Course: cleanSingle(cfg.staj2Course, DEFAULT_REQUIREMENTS.staj2Course),
+    bil493Bolum: bolum,
+    bil493BolumMin: clampMin(cfg.bil493BolumMin, DEFAULT_REQUIREMENTS.bil493BolumMin, bolum),
+    bil493Ortak: ortak,
+    bil494Prereq: cleanSingle(cfg.bil494Prereq, DEFAULT_REQUIREMENTS.bil494Prereq)
   };
 }
 
@@ -1073,22 +1094,26 @@ function evaluateStudent(student, requirements = DEFAULT_REQUIREMENTS) {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
-  const staj1Eligible = staj1Details.every(item => item.passed);
+  const staj1PassedCount = staj1Details.filter(i => i.passed).length;
+  const staj1Min = Math.min(requirements.staj1Min, requirements.staj1.length);
+  const staj1Eligible = staj1PassedCount >= staj1Min;
 
-  const staj1CourseGrade = student.courses['BİL300'];
+  const staj1CourseGrade = student.courses[requirements.staj1Course];
   const staj1TakenAndPassed = hasPassingGrade(staj1CourseGrade);
 
   const staj2Details = requirements.staj2.map(code => {
     const grade = student.courses[code];
     return { code, grade, passed: hasPassingGrade(grade) };
   });
-  const staj2CourseGrade = student.courses['BİL498'];
+  const staj2PassedCount = staj2Details.filter(i => i.passed).length;
+  const staj2Min = Math.min(requirements.staj2Min, requirements.staj2.length);
+  const staj2CourseGrade = student.courses[requirements.staj2Course];
   const staj2TakenAndPassed = hasPassingGrade(staj2CourseGrade);
 
   const staj2Eligible =
     staj1Eligible &&
     staj1TakenAndPassed &&
-    staj2Details.every(item => item.passed);
+    staj2PassedCount >= staj2Min;
 
   // BİL493 ön koşul: bölüm derslerinden en az N tanesi + tüm ortak dersler ≥ D
   const bil493BolumDetails = requirements.bil493Bolum.map(code => {
@@ -1106,8 +1131,8 @@ function evaluateStudent(student, requirements = DEFAULT_REQUIREMENTS) {
 
   const bil493Eligible = bil493BolumPassedCount >= bil493BolumMin && bil493OrtakAllPassed;
 
-  // BİL494 ön koşul: BİL493 tamamlanmış olmalı
-  const bil493AlreadyPassed = hasPassingGrade(student.courses['BİL493']);
+  // BİL494 ön koşul: ayarlarda belirtilen ders tamamlanmış olmalı
+  const bil493AlreadyPassed = hasPassingGrade(student.courses[requirements.bil494Prereq]);
   const bil494Eligible = bil493AlreadyPassed;
 
   return {
